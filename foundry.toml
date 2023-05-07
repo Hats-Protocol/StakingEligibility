@@ -12,6 +12,7 @@ remappings = [
   "hats-protocol/=lib/hats-protocol/src/",
   "hats-auth/=lib/hats-auth/src/",
   "@openzeppelin/=lib/openzeppelin-contracts/",
+  "solady/=lib/solady/src/"
 ]
 
 [profile.ci]

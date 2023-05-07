@@ -2,25 +2,12 @@
 pragma solidity ^0.8.18;
 
 import { Test, console2 } from "forge-std/Test.sol";
-import { StakingEligibility } from "../src/StakingEligibility.sol";
-import { Deploy } from "../script/StakingEligibility.s.sol";
+import {
+  StakingEligibility,
+  StakingEligibilityFactory,
+  StakingEligibilityFactoryTest
+} from "../test/StakingEligibilityFactory.t.sol";
+import { IHats } from "hats-protocol/Interfaces/IHats.sol";
+import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-contract CounterTest is Deploy, Test {
-  // variables inhereted from Deploy script
-  // Counter public counter;
-
-  uint256 public fork;
-  uint256 public BLOCK_NUMBER;
-
-  function setUp() public virtual {
-    // create and activate a fork, at BLOCK_NUMBER
-    // fork = vm.createSelectFork(vm.rpcUrl("mainnet"), BLOCK_NUMBER);
-
-    // deploy via the script
-    Deploy.prepare(false); // set to true to log deployment addresses
-    Deploy.run();
-
-
-  }
-
-}
+contract StakingEligibilityTest is StakingEligibilityFactoryTest { }
