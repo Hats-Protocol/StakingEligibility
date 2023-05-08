@@ -10,9 +10,8 @@ remappings = [
   "ds-test/=lib/forge-std/lib/ds-test/src/",
   "forge-std/=lib/forge-std/src/",
   "hats-protocol/=lib/hats-protocol/src/",
-  "hats-auth/=lib/hats-auth/src/",
   "@openzeppelin/=lib/openzeppelin-contracts/",
-  "solady/=lib/solady/src/"
+  "hats-module/=lib/hats-module/src/"
 ]
 
 [profile.ci]
