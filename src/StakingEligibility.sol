@@ -2,11 +2,8 @@
 pragma solidity ^0.8.18;
 
 // import { console2 } from "forge-std/Test.sol"; // remove before deploy
-import { IHatsEligibility } from "hats-protocol/Interfaces/IHatsEligibility.sol";
-import { IHats } from "hats-protocol/Interfaces/IHats.sol";
+import { HatsEligibilityModule, HatsModule } from "hats-module/HatsEligibilityModule.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import { Clone } from "solady/utils/Clone.sol";
-import { StakingEligibilityFactory } from "src/StakingEligibilityFactory.sol";
 
 /**
  * @title StakingEligibility
@@ -14,7 +11,7 @@ import { StakingEligibilityFactory } from "src/StakingEligibilityFactory.sol";
  * @notice A Hats Protocol eligibility contract that allows stakers to stake tokens to become eligible for a hat and be
  * slashed if they misbehave
  */
-contract StakingEligibility is IHatsEligibility, Clone {
+contract StakingEligibility is HatsEligibilityModule {
   /*//////////////////////////////////////////////////////////////
                             CUSTOM ERRORS
   //////////////////////////////////////////////////////////////*/
@@ -31,8 +28,6 @@ contract StakingEligibility is IHatsEligibility, Clone {
   error StakingEligibility_NotHatAdmin();
   /// @notice Thrown when a change to the minStake is attempted on an immutable hat
   error StakingEligibility_HatImmutable();
-  /// @notice Thrown when a non-factory tries to call a factory-only function
-  error StakingEligibility_NotFactory();
 
   /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -84,47 +79,20 @@ contract StakingEligibility is IHatsEligibility, Clone {
    * --------------------------------------------------------------------|
    * Offset  | Constant        | Type    | Length  |                     |
    * --------------------------------------------------------------------|
-   * 0       | FACTORY         | address | 20      |                     |
+   * 0       | IMPLEMENTATIO   | address | 20      |                     |
    * 20      | HATS            | address | 20      |                     |
    * 40      | hatId           | uint256 | 32      |                     |
    * 72      | TOKEN           | address | 20      |                     |
    * --------------------------------------------------------------------+
    */
 
-  /// @notice The address of the StakingEligibilityFactory that deployed this contract
-  function FACTORY() public pure returns (StakingEligibilityFactory) {
-    return StakingEligibilityFactory(_getArgAddress(0));
-  }
-
-  /// @notice Hats Protocol address
-  function HATS() public pure returns (IHats) {
-    return IHats(_getArgAddress(20));
-  }
-
-  /// @notice The hat id of the root of the branch to which this instance applies
-  function hatId() public pure returns (uint256) {
-    return _getArgUint256(40);
-  }
+  /**
+   * @dev The first three getters are inherited from HatsEligibilityModule
+   */
 
   function TOKEN() public pure returns (IERC20) {
     return IERC20(_getArgAddress(72));
   }
-
-  /// @notice The version of this StakingEligibility
-  function version() public view returns (string memory) {
-    // If the factory is not set (ie this is the implementation contract), use the version from storage
-    if (address(FACTORY()) == address(0)) return _version;
-    // Otherwise (ie this is a clone), use the factory's version
-    else return FACTORY().version();
-  }
-
-  /*//////////////////////////////////////////////////////////////
-                        INTERNAL CONSTANTS
-  //////////////////////////////////////////////////////////////*/
-
-  /// @notice The version of this StakingEligibility implementation
-  /// @dev This value is not set in clones
-  string internal _version;
 
   /*//////////////////////////////////////////////////////////////
                           MUTABLE STATE
@@ -154,15 +122,12 @@ contract StakingEligibility is IHatsEligibility, Clone {
   //////////////////////////////////////////////////////////////*/
 
   /**
-   * @notice Sets up this instance with initial operational values
-   * @dev Only callable by the factory. Since the factory only calls this function during a new deployment, this ensures
-   * it can only be called once per instance, and that the implementation contract is never initialized.
-   * @param _minStake The minimum stake required to be eligible for the hat
-   * @param _judgeHat The hat that can slash wearers
-   * @param _recipientHat The hat that can withdraw slashed stakes
+   * @inheritdoc HatsModule
    */
-  function setUp(uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat) external onlyFactory {
-    // set the initial values
+  function setUp(bytes memory _initdata) public override initializer {
+    // decode the _initData bytes and set the values in storage
+    (uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat) = abi.decode(_initdata, (uint248, uint256, uint256));
+    // set the initial values in storage
     minStake = _minStake;
     judgeHat = _judgeHat;
     recipientHat = _recipientHat;
@@ -177,19 +142,14 @@ contract StakingEligibility is IHatsEligibility, Clone {
 
   /// @notice Deploy the StakingEligibility implementation contract and set its version
   /// @dev This is only used to deploy the implementation contract, and should not be used to deploy clones
-  constructor(string memory __version) {
-    _version = __version;
-  }
+  constructor(string memory _version) HatsModule(_version) { }
 
   /*//////////////////////////////////////////////////////////////
                       HATS ELIGIBILITY FUNCTION
   //////////////////////////////////////////////////////////////*/
 
   /**
-   * @notice Returns whether the wearer is eligible for the hat, and whether they are in good standing
-   * @param _wearer The wearer to check
-   * @return eligible Whether the wearer is eligible for the hat
-   * @return standing Whether the wearer is in good standing
+   * @inheritdoc HatsEligibilityModule
    */
   function getWearerStatus(address _wearer, uint256 /* _hatId */ )
     public
@@ -353,11 +313,6 @@ contract StakingEligibility is IHatsEligibility, Clone {
   /*//////////////////////////////////////////////////////////////
                             MODIFIERS
   //////////////////////////////////////////////////////////////*/
-
-  modifier onlyFactory() {
-    if (msg.sender != address(FACTORY())) revert StakingEligibility_NotFactory();
-    _;
-  }
 
   modifier onlyHatAdmin() {
     if (!HATS().isAdminOfHat(msg.sender, hatId())) revert StakingEligibility_NotHatAdmin();
