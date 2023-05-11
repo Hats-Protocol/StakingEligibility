@@ -62,6 +62,7 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   error StakingEligibility_HatImmutable();
   error StakingEligibility_TransferFailed();
   error StakingEligibility_NothingToWithdraw();
+  error StakingEligibility_NotSlashed();
 
   event StakingEligibility_Deployed(
     uint256 hatId, address instance, address token, uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat
@@ -71,6 +72,7 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   event StakingEligibility_MinStakeChanged(uint248 newMinStake);
   event StakingEligibility_JudgeHatChanged(uint256 newJudgeHat);
   event StakingEligibility_RecipientHatChanged(uint256 newRecipientHat);
+  event StakingEligibility_Forgiven(address staker);
 
   event Transfer(address indexed from, address indexed to, uint256 value);
 
@@ -566,6 +568,74 @@ contract Slashing is WithInstanceTest {
     instance.slash(staker1);
 
     slashTest(staker1, true, false);
+  }
+}
+
+contract Forgiving is WithInstanceTest {
+  function forgiveTest(address _staker, bool _judge, bool _slashed) public {
+    recordPrelimValues(_staker);
+
+    if (!_judge) {
+      vm.expectRevert(StakingEligibility_NotJudge.selector);
+    } else if (!_slashed) {
+      vm.expectRevert(StakingEligibility_NotSlashed.selector);
+      vm.prank(judge);
+    } else {
+      vm.expectEmit(true, true, true, true);
+      emit StakingEligibility_Forgiven(_staker);
+      vm.prank(judge);
+    }
+
+    // forgive
+    instance.forgive(_staker);
+
+    // set expected post values
+    if (!_judge) {
+      // expect no change
+      expTotalStaked = totalStaked;
+      expTotalSlashed = totalSlashed;
+      expStakerStake = stakerStake;
+      expStakerSlashed = stakerSlashed;
+      expStakerBalance = stakerBalance;
+      expInstanceBalance = instanceBalance;
+    } else {
+      // expect stake and slashed vars to change
+      expTotalStaked = totalStaked;
+      expTotalSlashed = totalSlashed;
+      expStakerStake = stakerStake;
+      expStakerSlashed = false;
+      expStakerBalance = stakerBalance;
+      expInstanceBalance = instanceBalance;
+    }
+
+    stateAssertions(_staker);
+  }
+
+  function test_forgive_happy() public {
+    amount = 1000;
+    stake(staker1, amount);
+    // slash
+    vm.prank(judge);
+    instance.slash(staker1);
+
+    forgiveTest(staker1, true, true);
+  }
+
+  function test_unslashed_reverts() public {
+    amount = 1000;
+    stake(staker1, amount);
+
+    forgiveTest(staker1, true, false);
+  }
+
+  function test_notJudge_reverts() public {
+    amount = 1000;
+    stake(staker1, amount);
+    // slash
+    vm.prank(judge);
+    instance.slash(staker1);
+
+    forgiveTest(staker1, false, true);
   }
 }
 

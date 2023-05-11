@@ -32,6 +32,8 @@ contract StakingEligibility is HatsEligibilityModule {
   error StakingEligibility_TransferFailed();
   /// @notice Thrown when a withdraw is attempted when there is nothing to withdraw
   error StakingEligibility_NothingToWithdraw();
+  /// @notice Thrown when attempting to forgive an unslashed staker
+  error StakingEligibility_NotSlashed();
 
   /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -51,6 +53,8 @@ contract StakingEligibility is HatsEligibilityModule {
   event StakingEligibility_JudgeHatChanged(uint256 newJudgeHat);
   /// @notice Emitted when the recipientHat is updated by an admin of the {hatId}
   event StakingEligibility_RecipientHatChanged(uint256 newRecipientHat);
+  /// @notice Emitted when a slashed staker is forgiven
+  event StakingEligibility_Forgiven(address staker);
 
   /*//////////////////////////////////////////////////////////////
                             DATA MODELS
@@ -93,7 +97,6 @@ contract StakingEligibility is HatsEligibilityModule {
   /**
    * @dev The first three getters are inherited from HatsEligibilityModule
    */
-
   function TOKEN() public pure returns (IERC20) {
     return IERC20(_getArgAddress(72));
   }
@@ -257,6 +260,26 @@ contract StakingEligibility is HatsEligibilityModule {
 
     // log the slash
     emit StakingEligibility_Slashed(_staker, toSlash);
+  }
+
+  /**
+   * @notice Forgive `_slashed`, placing them back in good standing and allowing them to {stake} again
+   * @dev Only a wearer of the judge hat can forgive; cannot forgive if not slashed
+   * @param _staker The staker to forgive
+   */
+  function forgive(address _staker) external {
+    // only the judge can forgive
+    if (!HATS().isWearerOfHat(msg.sender, judgeHat)) revert StakingEligibility_NotJudge();
+    // load a pointer to the wearer's stake in storage
+    Stake storage s = stakes[_staker];
+    // cannot forgive if not slashed
+    if (!s.slashed) revert StakingEligibility_NotSlashed();
+
+    // set slashed to false
+    s.slashed = false;
+
+    // log the forgiveness
+    emit StakingEligibility_Forgiven(_staker);
   }
 
   /**
