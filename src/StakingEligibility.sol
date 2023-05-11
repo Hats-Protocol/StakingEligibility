@@ -128,7 +128,7 @@ contract StakingEligibility is HatsEligibilityModule {
   /**
    * @inheritdoc HatsModule
    */
-  function setUp(bytes memory _initdata) public override initializer {
+  function setUp(bytes calldata _initdata) public override initializer {
     // decode the _initData bytes and set the values in storage
     (uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat) = abi.decode(_initdata, (uint248, uint256, uint256));
     // set the initial values in storage
