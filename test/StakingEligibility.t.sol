@@ -230,16 +230,17 @@ contract Constructor is StakingEligibilityTest {
 }
 
 contract SetUp is WithInstanceTest {
-  function test_minStake() public {
+  function test_initData() public {
     assertEq(instance.minStake(), minStake, "minStake");
-  }
-
-  function test_judgeHat() public {
     assertEq(instance.judgeHat(), judgeHat, "judgeHat");
+    assertEq(instance.recipientHat(), recipientHat, "recipientHat");
   }
 
-  function test_recipientHat() public {
-    assertEq(instance.recipientHat(), recipientHat, "recipientHat");
+  function test_immutables() public {
+    assertEq(address(instance.TOKEN()), address(token), "token");
+    assertEq(address(instance.HATS()), address(hats), "hats");
+    assertEq(address(instance.IMPLEMENTATION()), address(implementation), "implementation");
+    assertEq(instance.hatId(), stakerHat, "hatId");
   }
 
   function test_otherStateVars_areEmpty() public {
