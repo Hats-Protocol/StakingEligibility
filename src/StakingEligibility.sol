@@ -28,6 +28,10 @@ contract StakingEligibility is HatsEligibilityModule {
   error StakingEligibility_NotHatAdmin();
   /// @notice Thrown when a change to the minStake is attempted on an immutable hat
   error StakingEligibility_HatImmutable();
+  /// @notice Thrown when a transfer fails
+  error StakingEligibility_TransferFailed();
+  /// @notice Thrown when a withdraw is attempted when there is nothing to withdraw
+  error StakingEligibility_NothingToWithdraw();
 
   /*//////////////////////////////////////////////////////////////
                               EVENTS
@@ -163,7 +167,7 @@ contract StakingEligibility is HatsEligibilityModule {
     standing = !s.slashed;
 
     // wearers are always ineligible if in bad standing, so no need to do another SLOAD if standing==false
-    eligible = standing ? false : s.amount >= minStake;
+    eligible = standing ? s.amount >= minStake : false;
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -186,8 +190,9 @@ contract StakingEligibility is HatsEligibilityModule {
     // increment the total valid stakes
     totalValidStakes += _amount;
 
-    // execute the stake and log it
-    TOKEN().transferFrom(msg.sender, address(this), uint256(_amount));
+    // execute the stake and log it, reverting if the transfer fails
+    bool success = TOKEN().transferFrom(msg.sender, address(this), uint256(_amount));
+    if (!success) revert StakingEligibility_TransferFailed();
     /**
      * @dev this action is logged by the token contract, but we can't distinguish between a direct transfer and one
      * triggered by this function, so we need to emit an event
@@ -203,18 +208,17 @@ contract StakingEligibility is HatsEligibilityModule {
   function unstake(uint248 _amount) external {
     // load a pointer to the wearer's stake in storage
     Stake storage s = stakes[msg.sender];
-    // _staker must have enough tokens staked
+    // _staker must have enough tokens staked; can occur after withdrawal or slashing
     if (s.amount < _amount) revert StakingEligibility_InsufficientStake();
-    // _staker cannot unstake if slashed
-    if (s.slashed) revert StakingEligibility_AlreadySlashed();
 
     // decrement the staker's stake
     s.amount -= _amount;
     // decrement the total valid stakes
     totalValidStakes -= _amount;
 
-    // execute the unstake
-    TOKEN().transfer(msg.sender, _amount);
+    // execute the unstake,
+    bool success = TOKEN().transfer(msg.sender, _amount);
+    if (!success) revert StakingEligibility_TransferFailed();
     /**
      * @dev this action is logged by the token contract, so we don't need to emit an event
      *
@@ -227,14 +231,17 @@ contract StakingEligibility is HatsEligibilityModule {
   //////////////////////////////////////////////////////////////*/
 
   /**
-   * @notice Slash `_staker`'s full stake
-   * @dev Only a wearer of the judge hat can slash
+   * @notice Slash `_staker`'s full stake. Even if stake is 0, slashing still sets their standing to false in
+   * {getWearerStatus}
+   * @dev Only a wearer of the judge hat can slash; cannot slash twice
    * @param _staker The staker to slash
    */
   function slash(address _staker) external {
+    // only the judge can slash
+    if (!HATS().isWearerOfHat(msg.sender, judgeHat)) revert StakingEligibility_NotJudge();
     // load a pointer to the wearer's stake in storage
     Stake storage s = stakes[_staker];
-    // only the judge can slash
+    // cannot slash if already slashed
     if (s.slashed) revert StakingEligibility_AlreadySlashed();
 
     // read the amount to slash into memory
@@ -257,15 +264,19 @@ contract StakingEligibility is HatsEligibilityModule {
    * @param _recipient The recipient of the withdrawn tokens; must wear the recipient hat
    */
   function withdraw(address _recipient) external {
-    // can only be withdrawn to the recipient
-    if (!HATS().isWearerOfHat(_recipient, recipientHat)) revert StakingEligibility_NotRecipient();
     // read the total slashed stakes into memory
     uint248 toWithdraw = totalSlashedStakes;
+    // don't proceed if there's nothing to withdraw
+    if (toWithdraw == 0) revert StakingEligibility_NothingToWithdraw();
+    // can only be withdrawn to the recipient
+    if (!HATS().isWearerOfHat(_recipient, recipientHat)) revert StakingEligibility_NotRecipient();
+
     // we're going to withdraw all of it, so the new value should be 0
     totalSlashedStakes = 0;
 
-    // execute the withdrawal
-    TOKEN().transfer(_recipient, toWithdraw);
+    // execute the withdrawal, reverting if the transfer fails
+    bool success = TOKEN().transfer(_recipient, toWithdraw);
+    if (!success) revert StakingEligibility_TransferFailed();
     /**
      * @dev this action is logged by the token contract, so we don't need to emit an event
      *
