@@ -1045,12 +1045,12 @@ contract ChangeMinStake is WithInstanceTest {
     vm.prank(dao);
     instance.changeMinStake(_minStake);
   }
-  
+
   function test_reducingMinStake_canChangeEligibility() public {
     amount = minStake - 100;
     stake(staker1, amount);
 
-     // wearer status checks
+    // wearer status checks
     (eligible, standing) = instance.getWearerStatus(staker1, 0);
     assertEq(eligible, false, "eligible");
     assertEq(standing, true, "standing");
@@ -1070,7 +1070,7 @@ contract ChangeMinStake is WithInstanceTest {
     amount = minStake + 100;
     stake(staker1, amount);
 
-     // wearer status checks
+    // wearer status checks
     (eligible, standing) = instance.getWearerStatus(staker1, 0);
     assertEq(eligible, true, "eligible");
     assertEq(standing, true, "standing");
