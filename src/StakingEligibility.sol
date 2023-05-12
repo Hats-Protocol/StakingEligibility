@@ -19,7 +19,7 @@ contract StakingEligibility is HatsEligibilityModule {
   /// @notice Thrown when a staker tries to unstake more than they have staked
   error StakingEligibility_InsufficientStake();
   /// @notice Thrown when an unstaker attempts to complete an unstake before the cooldown period has elapsed
-  error StakingEligibility_StillCoolingDown();
+  error StakingEligibility_CooldownNotEnded();
   /// @notice Thrown when an unstaker attempts to complete an unstake before beginning one
   error StakingEligibility_NotUnstaking();
   /// @notice Thrown when a judge tries to slash an already-slashed wearer, or when a slashed staker tries to unstake
@@ -45,7 +45,13 @@ contract StakingEligibility is HatsEligibilityModule {
 
   /// @notice Emitted when a StakingEligibility for `hatId` and `token` is deployed to address `instance`
   event StakingEligibility_Deployed(
-    uint256 hatId, address instance, address token, uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat
+    uint256 hatId,
+    address instance,
+    address token,
+    uint248 minStake,
+    uint256 judgeHat,
+    uint256 recipientHat,
+    uint256 cooldownPeriod
   );
   /// @notice Emitted when a staker stakes
   event StakingEligibility_Staked(address staker, uint248 amount);
@@ -154,14 +160,18 @@ contract StakingEligibility is HatsEligibilityModule {
    */
   function setUp(bytes calldata _initdata) public override initializer {
     // decode the _initData bytes and set the values in storage
-    (uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat) = abi.decode(_initdata, (uint248, uint256, uint256));
+    (uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat, uint256 _cooldownPeriod) =
+      abi.decode(_initdata, (uint248, uint256, uint256, uint256));
     // set the initial values in storage
     minStake = _minStake;
     judgeHat = _judgeHat;
     recipientHat = _recipientHat;
+    cooldownPeriod = _cooldownPeriod;
 
     // log the deployment & setup
-    emit StakingEligibility_Deployed(hatId(), address(this), address(TOKEN()), _minStake, _judgeHat, _recipientHat);
+    emit StakingEligibility_Deployed(
+      hatId(), address(this), address(TOKEN()), _minStake, _judgeHat, _recipientHat, _cooldownPeriod
+    );
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -251,12 +261,12 @@ contract StakingEligibility is HatsEligibilityModule {
     // _staker must not have been slashed since beginning the unstake
     if (s.slashed) revert StakingEligibility_AlreadySlashed();
     // load a pointer to the wearer's unstake ticket in storage
-    Cooldown storage cooldown = cooldowns[msg.sender];
+    Cooldown storage cooldown = cooldowns[_staker];
     uint248 amount = cooldown.amount;
     // cooldown must have been initiated
     if (amount == 0) revert StakingEligibility_NotUnstaking();
     // cooldown period must have elapsed
-    if (cooldown.endsAt > block.timestamp) revert StakingEligibility_StillCoolingDown();
+    if (cooldown.endsAt > block.timestamp) revert StakingEligibility_CooldownNotEnded();
 
     // we are completing the unstake, so we zero out the cooldown
     cooldown.amount = 0;
@@ -269,7 +279,7 @@ contract StakingEligibility is HatsEligibilityModule {
     totalValidStakes -= amount;
 
     // execute the unstake, reverting if the transfer fails
-    bool success = TOKEN().transfer(msg.sender, amount);
+    bool success = TOKEN().transfer(_staker, amount);
     if (!success) revert StakingEligibility_TransferFailed();
     /**
      * @dev this action is logged by the token contract, so we don't need to emit an event

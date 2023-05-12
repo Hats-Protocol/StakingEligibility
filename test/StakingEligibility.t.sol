@@ -29,6 +29,7 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   uint256 public tophat1;
   address public token;
   uint248 public minStake;
+  uint256 public cooldownPeriod;
   uint256 public stakerHat;
   uint256 public judgeHat;
   uint256 public recipientHat;
@@ -47,14 +48,20 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   bool public stakerSlashed;
   uint256 public stakerBalance;
   uint256 public instanceBalance;
+  uint248 public stakerUnstakeAmount;
+  uint256 public stakerCooldownEnd;
   uint248 public expTotalStaked;
   uint248 public expTotalSlashed;
   uint248 public expStakerStake;
   bool public expStakerSlashed;
   uint256 public expStakerBalance;
   uint256 public expInstanceBalance;
+  uint248 public expStakerUnstakeAmount;
+  uint256 public expStakerCooldownEnd;
 
   error StakingEligibility_InsufficientStake();
+  error StakingEligibility_CooldownNotEnded();
+  error StakingEligibility_NotUnstaking();
   error StakingEligibility_AlreadySlashed();
   error StakingEligibility_NotJudge();
   error StakingEligibility_NotRecipient();
@@ -65,9 +72,16 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   error StakingEligibility_NotSlashed();
 
   event StakingEligibility_Deployed(
-    uint256 hatId, address instance, address token, uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat
+    uint256 hatId,
+    address instance,
+    address token,
+    uint248 minStake,
+    uint256 judgeHat,
+    uint256 recipientHat,
+    uint256 cooldownPeriod
   );
   event StakingEligibility_Staked(address staker, uint248 amount);
+  event StakingEligibility_UnstakeBegun(address staker, uint248 amount, uint256 cooldownEnd);
   event StakingEligibility_Slashed(address wearer, uint248 amount);
   event StakingEligibility_MinStakeChanged(uint248 newMinStake);
   event StakingEligibility_JudgeHatChanged(uint256 newJudgeHat);
@@ -98,14 +112,18 @@ contract StakingEligibilityTest is Test, DeployImplementation {
     vm.stopPrank();
   }
 
-  function deployInstance(uint256 _hatId, address _token, uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat)
-    public
-    virtual
-  {
+  function deployInstance(
+    uint256 _hatId,
+    address _token,
+    uint248 _minStake,
+    uint256 _judgeHat,
+    uint256 _recipientHat,
+    uint256 _cooldownPeriod
+  ) public virtual {
     // encode the other immutable args
     otherImmutableArgs = abi.encodePacked(_token);
     // encode the init data
-    initData = abi.encode(_minStake, _judgeHat, _recipientHat);
+    initData = abi.encode(_minStake, _judgeHat, _recipientHat, _cooldownPeriod);
     // deploy the instance
     instance =
       StakingEligibility(factory.createHatsModule(address(implementation), _hatId, otherImmutableArgs, initData));
@@ -122,9 +140,10 @@ contract WithInstanceTest is StakingEligibilityTest {
     // set deploy params
     token = 0x6B175474E89094C44Da98b954EedeAC495271d0F; // DAI
     minStake = 1000;
+    cooldownPeriod = 1 hours;
 
     // deploy the instance
-    deployInstance(stakerHat, token, minStake, judgeHat, recipientHat);
+    deployInstance(stakerHat, token, minStake, judgeHat, recipientHat, cooldownPeriod);
 
     // change the stakerHat's eligibility to instance
     vm.prank(dao);
@@ -141,6 +160,7 @@ contract WithInstanceTest is StakingEligibilityTest {
     (stakerStake, stakerSlashed) = instance.stakes(_staker);
     stakerBalance = IERC20(token).balanceOf(_staker);
     instanceBalance = IERC20(token).balanceOf(address(instance));
+    (stakerUnstakeAmount, stakerCooldownEnd) = instance.cooldowns(_staker);
   }
 
   function stateAssertions(address _staker) public {
@@ -151,6 +171,9 @@ contract WithInstanceTest is StakingEligibilityTest {
     assertEq(stakerSlashed, expStakerSlashed, "stakerSlashed");
     assertEq(IERC20(token).balanceOf(_staker), expStakerBalance, "stakerBalance");
     assertEq(IERC20(token).balanceOf(address(instance)), expInstanceBalance, "instanceBalance");
+    (stakerUnstakeAmount, stakerCooldownEnd) = instance.cooldowns(_staker);
+    assertEq(stakerUnstakeAmount, expStakerUnstakeAmount, "unstakeAmount");
+    assertEq(stakerCooldownEnd, expStakerCooldownEnd, "cooldownEnd");
   }
 
   function stake(address _staker, uint248 _amount) public {
@@ -257,9 +280,9 @@ contract SetUp is WithInstanceTest {
     address predicted = factory.getHatsModuleAddress(address(implementation), stakerHat, otherImmutableArgs);
     // expect the event
     vm.expectEmit(true, true, true, true);
-    emit StakingEligibility_Deployed(stakerHat, predicted, token, minStake, judgeHat, recipientHat);
+    emit StakingEligibility_Deployed(stakerHat, predicted, token, minStake, judgeHat, recipientHat, cooldownPeriod);
 
-    deployInstance(stakerHat, token, minStake, judgeHat, recipientHat);
+    deployInstance(stakerHat, token, minStake, judgeHat, recipientHat, cooldownPeriod);
   }
 }
 
@@ -429,19 +452,23 @@ contract Staking is WithInstanceTest {
   }
 }
 
+// TODO add tests for cooldown
 contract Unstaking is WithInstanceTest {
-  function unstakeTest(address _staker, uint248 _amount, bool _sufficient) public {
+  uint256 public end;
+
+  function beginUnstakeTest(address _staker, uint248 _amount, bool _sufficient) public {
     recordPrelimValues(_staker);
 
     if (!_sufficient) {
       vm.expectRevert(StakingEligibility_InsufficientStake.selector);
     } else {
       vm.expectEmit(true, true, true, true);
-      emit Transfer(address(instance), _staker, _amount);
+      end = block.timestamp + instance.cooldownPeriod();
+      emit StakingEligibility_UnstakeBegun(_staker, _amount, end);
     }
 
     vm.prank(_staker);
-    instance.unstake(_amount);
+    instance.beginUnstake(_amount);
 
     // set expected post values
     if (!_sufficient) {
@@ -452,52 +479,169 @@ contract Unstaking is WithInstanceTest {
       expStakerSlashed = stakerSlashed;
       expStakerBalance = stakerBalance;
       expInstanceBalance = instanceBalance;
+      expStakerUnstakeAmount = 0;
+      expStakerCooldownEnd = 0;
     } else {
       // expect stake vars to change
+      expTotalStaked = totalStaked;
+      expTotalSlashed = totalSlashed;
+      expStakerStake = stakerStake;
+      expStakerSlashed = stakerSlashed;
+      expStakerBalance = stakerBalance;
+      expInstanceBalance = instanceBalance;
+      expStakerUnstakeAmount = _amount;
+      expStakerCooldownEnd = end;
+    }
+
+    stateAssertions(_staker);
+  }
+
+  function completeUnstakeTest(
+    address _staker,
+    address _caller,
+    uint248 _amount,
+    bool _notSlashed,
+    bool _unstaking,
+    bool _cooldownEnded
+  ) public {
+    recordPrelimValues(_staker);
+
+    if (!_notSlashed) {
+      vm.expectRevert(StakingEligibility_AlreadySlashed.selector);
+    } else if (!_unstaking) {
+      vm.expectRevert(StakingEligibility_NotUnstaking.selector);
+    } else if (!_cooldownEnded) {
+      vm.expectRevert(StakingEligibility_CooldownNotEnded.selector);
+    } else {
+      vm.expectEmit(true, true, true, true);
+      emit Transfer(address(instance), _staker, _amount);
+    }
+
+    vm.prank(_caller);
+    instance.completeUnstake(_staker);
+
+    // set expected post values
+    if (!_notSlashed || !_unstaking || !_cooldownEnded) {
+      // expect no change
+      expTotalStaked = totalStaked;
+      expTotalSlashed = totalSlashed;
+      expStakerStake = stakerStake;
+      expStakerSlashed = stakerSlashed;
+      expStakerBalance = stakerBalance;
+      expInstanceBalance = instanceBalance;
+      expStakerUnstakeAmount = stakerUnstakeAmount;
+      expStakerCooldownEnd = stakerCooldownEnd;
+    } else {
+      // expect stake and unstake vars to change
       expTotalStaked = totalStaked - _amount;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake - _amount;
       expStakerSlashed = stakerSlashed;
       expStakerBalance = stakerBalance + uint256(_amount);
       expInstanceBalance = instanceBalance - uint256(_amount);
+      expStakerUnstakeAmount = 0;
+      expStakerCooldownEnd = 0;
     }
 
     stateAssertions(_staker);
   }
 
-  function test_unstake_sameAmount() public {
+  function test_beginUnstake_sameAmount() public {
     amount = 1000;
     stake(staker1, amount);
 
-    // unstake
-    unstakeTest(staker1, amount, true);
+    // begin unstake
+    beginUnstakeTest(staker1, amount, true);
   }
 
-  function test_unstake_smallerAmount() public {
+  function test_beginUnstake_smallerAmount() public {
     amount = 1000;
     stake(staker1, amount);
 
-    // unstake a lower amount
-    unstakeTest(staker1, amount - 50, true);
+    // begin unstake a lower amount
+    beginUnstakeTest(staker1, amount - 50, true);
   }
 
-  function test_unstake_tooMuch_reverts() public {
+  function test_beginUnstake_slashed_reverts() public {
     amount = 1000;
     stake(staker1, amount);
 
-    // unstake a higher amount
-    unstakeTest(staker1, amount + 1, false);
-  }
-
-  function test_unstake_slashed_reverts() public {
-    amount = 1000;
-    stake(staker1, amount);
     // slash
     vm.prank(judge);
     instance.slash(staker1);
 
-    // unstake a higher amount
-    unstakeTest(staker1, amount, false);
+    // begin unstake a lower amount
+    beginUnstakeTest(staker1, amount, false);
+  }
+
+  function test_beginUnstake_tooMuch_reverts() public {
+    amount = 1000;
+    stake(staker1, amount);
+
+    // begin unstake a higher amount
+    beginUnstakeTest(staker1, amount + 1, false);
+  }
+
+  function test_completeUnstake_self_happy() public {
+    amount = 1000;
+    stake(staker1, amount);
+    // begin unstake
+    beginUnstakeTest(staker1, amount, true);
+
+    // warp to cooldown end
+    vm.warp(end);
+    // complete unstake
+    completeUnstakeTest(staker1, staker1, amount, true, true, true);
+  }
+
+  function test_completeUnstake_otherCaller_happy() public {
+    amount = 1000;
+    stake(staker1, amount);
+    // begin unstake
+    beginUnstakeTest(staker1, amount, true);
+
+    // warp to cooldown end
+    vm.warp(end);
+    // complete unstake
+    completeUnstakeTest(staker1, nonWearer, amount, true, true, true);
+  }
+
+  function test_completeUnstake_slashed_reverts() public {
+    amount = 1000;
+    stake(staker1, amount);
+    // begin unstake
+    beginUnstakeTest(staker1, amount, true);
+
+    // slash
+    vm.prank(judge);
+    instance.slash(staker1);
+
+    // warp to cooldown end
+    vm.warp(end);
+    // attempt complete unstake
+    completeUnstakeTest(staker1, staker1, amount, false, true, true);
+  }
+
+  function test_completeUnstake_notUnstaking_reverts() public {
+    amount = 1000;
+    stake(staker1, amount);
+
+    // warp to cooldown end
+    vm.warp(end);
+    // attempt complete unstake
+    completeUnstakeTest(staker1, staker1, amount, true, false, true);
+  }
+
+  function test_completeUnstake_cooldownNotEnded_reverts() public {
+    amount = 1000;
+    stake(staker1, amount);
+    // begin unstake
+    beginUnstakeTest(staker1, amount, true);
+
+    // warp to before cooldown ends
+    vm.warp(end - 1);
+    // complete unstake
+    completeUnstakeTest(staker1, staker1, amount, true, true, false);
   }
 }
 
