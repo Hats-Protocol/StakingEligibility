@@ -113,7 +113,7 @@ contract StakingEligibility is HatsEligibilityModule {
    * --------------------------------------------------------------------|
    * Offset  | Constant        | Type    | Length  |                     |
    * --------------------------------------------------------------------|
-   * 0       | IMPLEMENTATIO   | address | 20      |                     |
+   * 0       | IMPLEMENTATION  | address | 20      |                     |
    * 20      | HATS            | address | 20      |                     |
    * 40      | hatId           | uint256 | 32      |                     |
    * 72      | TOKEN           | address | 20      |                     |
