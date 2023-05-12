@@ -74,16 +74,21 @@ contract StakingEligibility is HatsEligibilityModule {
                             DATA MODELS
   //////////////////////////////////////////////////////////////*/
 
-  /// @dev Packed into a single storage slot
-  /// @custom:member amount The amount of tokens staked
-  /// @custom:member slashed Whether the stake has been slashed
+  /**
+   * @dev Packed into a single storage slot
+   * @custom:member amount The amount of tokens staked
+   * @custom:member slashed Whether the stake has been slashed
+   */
   struct Stake {
     uint248 amount; // 31 bytes
     bool slashed; // 1 byte
   }
 
-  /// @custom:member amount The amount of tokens to be unstaked
-  /// @custom:member endsAt When the cooldown period ends, in seconds since the epoch
+  /**
+   * @notice Data for an unstaking cooldown period
+   * @custom:member amount The amount of tokens to be unstaked
+   * @custom:member endsAt When the cooldown period ends, in seconds since the epoch
+   */
   struct Cooldown {
     uint248 amount;
     uint256 endsAt;
@@ -136,7 +141,10 @@ contract StakingEligibility is HatsEligibilityModule {
   /// @notice The hat that can withdraw slashed stakes
   uint256 public recipientHat;
 
-  /// @notice The number of seconds that must elapse between beginning an unstake and completing it
+  /**
+   * @notice The number of seconds that must elapse between beginning an unstake and completing it. This should be set
+   *  long enough to give a wearer of the `judgeHat` enough time to slash a misbehaving staker before they can unstake.
+   */
   uint256 public cooldownPeriod;
 
   /// @notice The stakes of each staker
@@ -234,10 +242,13 @@ contract StakingEligibility is HatsEligibilityModule {
     emit StakingEligibility_Staked(msg.sender, _amount);
   }
 
+  /**
+   * @notice Begin the process of unstaking `_amount` tokens by initiating a cooldown period, after which the tokens can
+   * be unstaked. This cooldown period exists to a wearer of the `judgeHat` enough time to slash the staker if they
+   * misbehave.
+   * @param _amount The amount of tokens to unstake, as a uint248
+   */
   function beginUnstake(uint248 _amount) external {
-    // load a pointer to the wearer's stake in storage
-    // Stake memory s = stakes[msg.sender]; // TODO check gas impact
-
     // _staker must have enough tokens staked
     if (stakes[msg.sender].amount < _amount) revert StakingEligibility_InsufficientStake();
 
@@ -271,7 +282,6 @@ contract StakingEligibility is HatsEligibilityModule {
     // we are completing the unstake, so we zero out the cooldown
     cooldown.amount = 0;
     cooldown.endsAt = 0;
-    // delete cooldown; // TODO check gas impact
 
     // decrement the staker's stake
     s.amount -= amount;
@@ -409,6 +419,13 @@ contract StakingEligibility is HatsEligibilityModule {
     emit StakingEligibility_RecipientHatChanged(_recipientHat);
   }
 
+  /**
+   * @notice Change the number of seconds that must elapse between beginning an unstake and completing it. This period
+   * should be long enough that a wearer of the `judgeHat` has enough time to slash a misbehaving staker before they can
+   * unstake.
+   * @dev Only an admin of the {hatId} can change the cooldownPeriod, and only if the hat is mutable
+   * @param _cooldownPeriod The new cooldown period
+   */
   function changeCooldownPeriod(uint256 _cooldownPeriod) external onlyHatAdmin hatIsMutable {
     cooldownPeriod = _cooldownPeriod;
 

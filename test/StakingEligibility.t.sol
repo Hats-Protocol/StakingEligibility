@@ -395,9 +395,13 @@ contract Staking is WithInstanceTest {
     stateAssertions(_staker);
   }
 
-  function test_firstStake_happy(uint248 _amount) public {
+  function testFuzz_firstStake_happy(uint248 _amount) public {
     deal(token, staker1, _amount, true);
     stakeTest(staker1, _amount, true);
+  }
+
+  function test_firstStake_1000() public {
+    testFuzz_firstStake_happy(1000);
   }
 
   function test_stakeTwice_happy() public {
