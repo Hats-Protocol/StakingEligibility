@@ -58,10 +58,14 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   uint256 public expInstanceBalance;
   uint248 public expStakerUnstakeAmount;
   uint256 public expStakerCooldownEnd;
+  bool public eligible;
+  bool public standing;
+  bool public expEligible;
+  bool public expStanding;
 
   error StakingEligibility_InsufficientStake();
   error StakingEligibility_CooldownNotEnded();
-  error StakingEligibility_NotUnstaking();
+  error StakingEligibility_NoCooldown();
   error StakingEligibility_AlreadySlashed();
   error StakingEligibility_NotJudge();
   error StakingEligibility_NotRecipient();
@@ -164,13 +168,20 @@ contract WithInstanceTest is StakingEligibilityTest {
   }
 
   function stateAssertions(address _staker) public {
+    // global state assertions
     assertEq(instance.totalValidStakes(), expTotalStaked, "totalStaked");
     assertEq(instance.totalSlashedStakes(), expTotalSlashed, "totalSlashedStakes");
+
+    // staker stake assertions
     (stakerStake, stakerSlashed) = instance.stakes(_staker);
     assertEq(stakerStake, expStakerStake, "stakerStake");
     assertEq(stakerSlashed, expStakerSlashed, "stakerSlashed");
+
+    // balance assertions
     assertEq(IERC20(token).balanceOf(_staker), expStakerBalance, "stakerBalance");
     assertEq(IERC20(token).balanceOf(address(instance)), expInstanceBalance, "instanceBalance");
+
+    // staker unstake cooldown assertions
     (stakerUnstakeAmount, stakerCooldownEnd) = instance.cooldowns(_staker);
     assertEq(stakerUnstakeAmount, expStakerUnstakeAmount, "unstakeAmount");
     assertEq(stakerCooldownEnd, expStakerCooldownEnd, "cooldownEnd");
@@ -287,9 +298,6 @@ contract SetUp is WithInstanceTest {
 }
 
 contract GetWearerStatus is WithInstanceTest {
-  bool public eligible;
-  bool public standing;
-
   function test_atMinStake_true_true() public {
     amount = minStake;
     stake(staker1, amount);
@@ -391,6 +399,9 @@ contract Staking is WithInstanceTest {
       expStakerBalance = stakerBalance - uint256(_amount);
       expInstanceBalance = instanceBalance + uint256(_amount);
     }
+    // these are always unchanged by a new stake
+    expStakerUnstakeAmount = stakerUnstakeAmount;
+    expStakerCooldownEnd = stakerCooldownEnd;
 
     stateAssertions(_staker);
   }
@@ -398,10 +409,21 @@ contract Staking is WithInstanceTest {
   function testFuzz_firstStake_happy(uint248 _amount) public {
     deal(token, staker1, _amount, true);
     stakeTest(staker1, _amount, true);
+
+    // wearer status checks
+    expStanding = true;
+    if (_amount >= minStake && expStanding) expEligible = true; // default value is false
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, expEligible, "eligible");
+    assertEq(standing, expStanding, "standing");
   }
 
   function test_firstStake_1000() public {
     testFuzz_firstStake_happy(1000);
+
+    // wearer status checks
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_stakeTwice_happy() public {
@@ -409,6 +431,11 @@ contract Staking is WithInstanceTest {
     deal(token, staker1, amount * 3);
     stakeTest(staker1, amount, true);
     stakeTest(staker1, amount + 1, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_secondStaker_happy() public {
@@ -419,12 +446,45 @@ contract Staking is WithInstanceTest {
     amount = 1005;
     deal(token, staker2, amount);
     stakeTest(staker2, amount, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "staker1 eligible");
+    assertEq(standing, true, "staker1 standing");
+    (eligible, standing) = instance.getWearerStatus(staker2, 0);
+    assertEq(eligible, true, "staker2 eligible");
+    assertEq(standing, true, "staker2 standing");
+  }
+
+  function test_stake_coolingDown_happy() public {
+    amount = 1000;
+    deal(token, staker1, amount);
+    stakeTest(staker1, amount, true);
+
+    // begin unstake half the amount
+    vm.prank(staker1);
+    instance.beginUnstake(amount / 2);
+
+    // stake again after cooldown begins
+    vm.warp(block.timestamp + 1);
+    deal(token, staker1, amount);
+    stakeTest(staker1, amount, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_stake_unapproved_reverts() public {
     amount = 1000;
     deal(token, staker1, amount);
     stakeTest(staker1, amount, false);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_stake_slashed_reverts() public {
@@ -438,6 +498,11 @@ contract Staking is WithInstanceTest {
 
     // try to stake again
     stakeTest(staker1, amount, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, false, "standing");
   }
 
   function test_stakeTwice_TooMuch_reverts() public {
@@ -453,10 +518,14 @@ contract Staking is WithInstanceTest {
     vm.expectRevert();
     vm.prank(staker1);
     instance.stake(amount);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 }
 
-// TODO add tests for cooldown
 contract Unstaking is WithInstanceTest {
   uint256 public end;
 
@@ -487,9 +556,9 @@ contract Unstaking is WithInstanceTest {
       expStakerCooldownEnd = 0;
     } else {
       // expect stake vars to change
-      expTotalStaked = totalStaked;
+      expTotalStaked = totalStaked - _amount;
       expTotalSlashed = totalSlashed;
-      expStakerStake = stakerStake;
+      expStakerStake = stakerStake - _amount;
       expStakerSlashed = stakerSlashed;
       expStakerBalance = stakerBalance;
       expInstanceBalance = instanceBalance;
@@ -500,21 +569,17 @@ contract Unstaking is WithInstanceTest {
     stateAssertions(_staker);
   }
 
-  function completeUnstakeTest(
-    address _staker,
-    address _caller,
-    uint248 _amount,
-    bool _notSlashed,
-    bool _unstaking,
-    bool _cooldownEnded
-  ) public {
+  function completeUnstakeTest(address _staker, address _caller, uint248 _amount) public {
     recordPrelimValues(_staker);
 
-    if (!_notSlashed) {
+    bool unstaking = stakerUnstakeAmount > 0;
+    bool cooldownEnded = block.timestamp >= stakerCooldownEnd;
+
+    if (stakerSlashed) {
       vm.expectRevert(StakingEligibility_AlreadySlashed.selector);
-    } else if (!_unstaking) {
-      vm.expectRevert(StakingEligibility_NotUnstaking.selector);
-    } else if (!_cooldownEnded) {
+    } else if (!unstaking) {
+      vm.expectRevert(StakingEligibility_NoCooldown.selector);
+    } else if (!cooldownEnded) {
       vm.expectRevert(StakingEligibility_CooldownNotEnded.selector);
     } else {
       vm.expectEmit(true, true, true, true);
@@ -525,7 +590,7 @@ contract Unstaking is WithInstanceTest {
     instance.completeUnstake(_staker);
 
     // set expected post values
-    if (!_notSlashed || !_unstaking || !_cooldownEnded) {
+    if (stakerSlashed || !unstaking || !cooldownEnded) {
       // expect no change
       expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
@@ -536,10 +601,10 @@ contract Unstaking is WithInstanceTest {
       expStakerUnstakeAmount = stakerUnstakeAmount;
       expStakerCooldownEnd = stakerCooldownEnd;
     } else {
-      // expect stake and unstake vars to change
-      expTotalStaked = totalStaked - _amount;
+      // expect only cooldown and balance vars to change
+      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
-      expStakerStake = stakerStake - _amount;
+      expStakerStake = stakerStake;
       expStakerSlashed = stakerSlashed;
       expStakerBalance = stakerBalance + uint256(_amount);
       expInstanceBalance = instanceBalance - uint256(_amount);
@@ -556,6 +621,11 @@ contract Unstaking is WithInstanceTest {
 
     // begin unstake
     beginUnstakeTest(staker1, amount, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_beginUnstake_smallerAmount() public {
@@ -564,6 +634,11 @@ contract Unstaking is WithInstanceTest {
 
     // begin unstake a lower amount
     beginUnstakeTest(staker1, amount - 50, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_beginUnstake_slashed_reverts() public {
@@ -576,6 +651,11 @@ contract Unstaking is WithInstanceTest {
 
     // begin unstake a lower amount
     beginUnstakeTest(staker1, amount, false);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, false, "standing");
   }
 
   function test_beginUnstake_tooMuch_reverts() public {
@@ -584,6 +664,11 @@ contract Unstaking is WithInstanceTest {
 
     // begin unstake a higher amount
     beginUnstakeTest(staker1, amount + 1, false);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_completeUnstake_self_happy() public {
@@ -594,8 +679,13 @@ contract Unstaking is WithInstanceTest {
 
     // warp to cooldown end
     vm.warp(end);
-    // complete unstake
-    completeUnstakeTest(staker1, staker1, amount, true, true, true);
+    // complete unstake by staker1
+    completeUnstakeTest(staker1, staker1, amount);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_completeUnstake_otherCaller_happy() public {
@@ -606,8 +696,13 @@ contract Unstaking is WithInstanceTest {
 
     // warp to cooldown end
     vm.warp(end);
-    // complete unstake
-    completeUnstakeTest(staker1, nonWearer, amount, true, true, true);
+    // complete unstake by another caller
+    completeUnstakeTest(staker1, nonWearer, amount);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_completeUnstake_slashed_reverts() public {
@@ -623,7 +718,12 @@ contract Unstaking is WithInstanceTest {
     // warp to cooldown end
     vm.warp(end);
     // attempt complete unstake
-    completeUnstakeTest(staker1, staker1, amount, false, true, true);
+    completeUnstakeTest(staker1, staker1, amount);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, false, "standing");
   }
 
   function test_completeUnstake_notUnstaking_reverts() public {
@@ -633,7 +733,12 @@ contract Unstaking is WithInstanceTest {
     // warp to cooldown end
     vm.warp(end);
     // attempt complete unstake
-    completeUnstakeTest(staker1, staker1, amount, true, false, true);
+    completeUnstakeTest(staker1, staker1, amount);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_completeUnstake_cooldownNotEnded_reverts() public {
@@ -645,22 +750,27 @@ contract Unstaking is WithInstanceTest {
     // warp to before cooldown ends
     vm.warp(end - 1);
     // complete unstake
-    completeUnstakeTest(staker1, staker1, amount, true, true, false);
+    completeUnstakeTest(staker1, staker1, amount);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 }
 
 contract Slashing is WithInstanceTest {
-  function slashTest(address _staker, bool _judge, bool _notSlashed) public {
+  function slashTest(address _staker, bool _judge) public {
     recordPrelimValues(staker1);
 
     if (!_judge) {
       vm.expectRevert(StakingEligibility_NotJudge.selector);
-    } else if (!_notSlashed) {
+    } else if (stakerSlashed) {
       vm.expectRevert(StakingEligibility_AlreadySlashed.selector);
       vm.prank(judge);
     } else {
       vm.expectEmit(true, true, true, true);
-      emit StakingEligibility_Slashed(_staker, stakerStake);
+      emit StakingEligibility_Slashed(_staker, stakerStake + stakerUnstakeAmount);
       vm.prank(judge);
     }
 
@@ -676,14 +786,18 @@ contract Slashing is WithInstanceTest {
       expStakerSlashed = stakerSlashed;
       expStakerBalance = stakerBalance;
       expInstanceBalance = instanceBalance;
+      expStakerUnstakeAmount = stakerUnstakeAmount;
+      expStakerCooldownEnd = stakerCooldownEnd;
     } else {
-      // expect stake and slashed vars to change
+      // expect stake, cooldown, and slashed vars to change
       expTotalStaked = totalStaked - stakerStake;
-      expTotalSlashed = totalSlashed + stakerStake;
+      expTotalSlashed = totalSlashed + stakerStake + stakerUnstakeAmount;
       expStakerStake = stakerStake - stakerStake;
       expStakerSlashed = true;
       expStakerBalance = stakerBalance;
       expInstanceBalance = instanceBalance;
+      expStakerUnstakeAmount = 0;
+      expStakerCooldownEnd = 0;
     }
 
     stateAssertions(_staker);
@@ -693,18 +807,45 @@ contract Slashing is WithInstanceTest {
     amount = 1000;
     stake(staker1, amount);
 
-    slashTest(staker1, true, true);
+    slashTest(staker1, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, false, "standing");
   }
 
-  function test_unstaked_canStillSlash() public {
-    slashTest(staker1, true, true);
+  function test_notStaked_canStillSlash() public {
+    slashTest(staker1, true);
+  }
+
+  function test_coolingDown_happy() public {
+    amount = 1000;
+    stake(staker1, amount);
+
+    // begin unstake
+    vm.prank(staker1);
+    instance.beginUnstake(amount - 10);
+
+    // slash
+    slashTest(staker1, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, false, "standing");
   }
 
   function test_notJudge_reverts() public {
     amount = 1000;
     stake(staker1, amount);
 
-    slashTest(staker1, false, true);
+    slashTest(staker1, false);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_alreadySlashed_reverts() public {
@@ -715,7 +856,12 @@ contract Slashing is WithInstanceTest {
     vm.prank(judge);
     instance.slash(staker1);
 
-    slashTest(staker1, true, false);
+    slashTest(staker1, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, false, "standing");
   }
 }
 
@@ -755,6 +901,9 @@ contract Forgiving is WithInstanceTest {
       expStakerBalance = stakerBalance;
       expInstanceBalance = instanceBalance;
     }
+    // cooldown vars should never change with a forgive
+    expStakerUnstakeAmount = stakerUnstakeAmount;
+    expStakerCooldownEnd = stakerCooldownEnd;
 
     stateAssertions(_staker);
   }
@@ -767,6 +916,11 @@ contract Forgiving is WithInstanceTest {
     instance.slash(staker1);
 
     forgiveTest(staker1, true, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_unslashed_reverts() public {
@@ -774,6 +928,11 @@ contract Forgiving is WithInstanceTest {
     stake(staker1, amount);
 
     forgiveTest(staker1, true, false);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
   }
 
   function test_notJudge_reverts() public {
@@ -784,6 +943,11 @@ contract Forgiving is WithInstanceTest {
     instance.slash(staker1);
 
     forgiveTest(staker1, false, true);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, false, "standing");
   }
 }
 
@@ -880,6 +1044,46 @@ contract ChangeMinStake is WithInstanceTest {
     vm.expectRevert(StakingEligibility_HatImmutable.selector);
     vm.prank(dao);
     instance.changeMinStake(_minStake);
+  }
+  
+  function test_reducingMinStake_canChangeEligibility() public {
+    amount = minStake - 100;
+    stake(staker1, amount);
+
+     // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
+
+    // reduce min stake
+    _minStake = minStake - 101;
+    vm.prank(dao);
+    instance.changeMinStake(_minStake);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
+  }
+
+  function test_increasingMinStake_canChangeEligibility() public {
+    amount = minStake + 100;
+    stake(staker1, amount);
+
+     // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, true, "eligible");
+    assertEq(standing, true, "standing");
+
+    // increase min stake
+    _minStake = minStake + 200;
+    vm.prank(dao);
+    instance.changeMinStake(_minStake);
+
+    // wearer status checks
+    (eligible, standing) = instance.getWearerStatus(staker1, 0);
+    assertEq(eligible, false, "eligible");
+    assertEq(standing, true, "standing");
   }
 }
 

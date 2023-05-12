@@ -20,8 +20,8 @@ contract StakingEligibility is HatsEligibilityModule {
   error StakingEligibility_InsufficientStake();
   /// @notice Thrown when an unstaker attempts to complete an unstake before the cooldown period has elapsed
   error StakingEligibility_CooldownNotEnded();
-  /// @notice Thrown when an unstaker attempts to complete an unstake before beginning one
-  error StakingEligibility_NotUnstaking();
+  /// @notice Thrown when an unstaker attempts to complete an unstake before beginning a cooldown period
+  error StakingEligibility_NoCooldown();
   /// @notice Thrown when a judge tries to slash an already-slashed wearer, or when a slashed staker tries to unstake
   error StakingEligibility_AlreadySlashed();
   /// @notice Thrown when a non-judge tries to slash a wearer
@@ -143,7 +143,7 @@ contract StakingEligibility is HatsEligibilityModule {
 
   /**
    * @notice The number of seconds that must elapse between beginning an unstake and completing it. This should be set
-   *  long enough to give a wearer of the `judgeHat` enough time to slash a misbehaving staker before they can unstake.
+   *  long enough to give a wearer of the `judgeHat` enough time to slash a misbehaving staker before they can unstk.
    */
   uint256 public cooldownPeriod;
 
@@ -156,7 +156,7 @@ contract StakingEligibility is HatsEligibilityModule {
   /// @notice The sum of all valid stakes
   uint248 public totalValidStakes;
 
-  /// @notice The sum of all slashed stakes that have not been withdrawn
+  /// @notice The sum of all slashed stakes that have not yet been withdrawn to a wearer of the `recipientHat`
   uint248 public totalSlashedStakes;
 
   /*//////////////////////////////////////////////////////////////
@@ -204,12 +204,12 @@ contract StakingEligibility is HatsEligibilityModule {
     returns (bool eligible, bool standing)
   {
     // load a pointer to the wearer's stake in storage
-    Stake storage s = stakes[_wearer];
+    Stake storage stk = stakes[_wearer];
     // standing is the opposite of slashed
-    standing = !s.slashed;
+    standing = !stk.slashed;
 
     // wearers are always ineligible if in bad standing, so no need to do another SLOAD if standing==false
-    eligible = standing ? s.amount >= minStake : false;
+    eligible = standing ? stk.amount >= minStake : false;
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -223,13 +223,12 @@ contract StakingEligibility is HatsEligibilityModule {
    */
   function stake(uint248 _amount) external {
     // load a pointer to the wearer's stake in storage
-    Stake storage s = stakes[msg.sender];
+    Stake storage stk = stakes[msg.sender];
     // staker must have not been slashed
-    if (s.slashed) revert StakingEligibility_AlreadySlashed();
+    if (stk.slashed) revert StakingEligibility_AlreadySlashed();
 
-    // increment the staker's stake
-    s.amount += _amount;
-    // increment the total valid stakes
+    // increment the staker's stake and total valid stakes
+    stk.amount += _amount;
     totalValidStakes += _amount;
 
     // execute the stake and log it, reverting if the transfer fails
@@ -244,19 +243,32 @@ contract StakingEligibility is HatsEligibilityModule {
 
   /**
    * @notice Begin the process of unstaking `_amount` tokens by initiating a cooldown period, after which the tokens can
-   * be unstaked. This cooldown period exists to a wearer of the `judgeHat` enough time to slash the staker if they
-   * misbehave.
-   * @param _amount The amount of tokens to unstake, as a uint248
+   * be unstaked if the skater is not slashed in the meantime. Once unstaking has begun, it cannot be reversed.
+   *  The cooldown period exists to a wearer of the `judgeHat` enough time to slash the staker if they misbehave.
+   * @dev Caller must have enough tokens staked, and must not be in the middle of an unstake cooldown.
+   * @param _amount The amount of tokens to unstake, as a uint248. If removing amount from the caller's stake brings it
+   * under `minStake`, they will immediately become ineligible for {hatId}.
    */
   function beginUnstake(uint248 _amount) external {
     // _staker must have enough tokens staked
-    if (stakes[msg.sender].amount < _amount) revert StakingEligibility_InsufficientStake();
+    Stake storage stk = stakes[msg.sender];
+    if (stk.amount < _amount) revert StakingEligibility_InsufficientStake();
+    // cannot begin unstaking if already unstaking
+    Cooldown storage cooldown = cooldowns[msg.sender];
+    if (cooldown.amount > 0) revert StakingEligibility_CooldownNotEnded();
 
     // create a new cooldown
-    Cooldown storage cooldown = cooldowns[msg.sender];
     cooldown.amount = _amount;
     uint256 end = block.timestamp + cooldownPeriod;
     cooldown.endsAt = end;
+
+    // decrement the staker's stake and tota valid stakes
+    unchecked {
+      // should not underflow given the InsufficientStake check above
+      stk.amount -= _amount;
+      // should not underflow since totalValidStakes is always >= stk.amount
+      totalValidStakes -= _amount;
+    }
 
     // log the unstake initiation
     emit StakingEligibility_UnstakeBegun(msg.sender, _amount, end);
@@ -264,29 +276,25 @@ contract StakingEligibility is HatsEligibilityModule {
 
   /**
    * @notice Complete the process of unstaking for a `_staker` after the `cooldownPeriod` has elapsed
-   * @dev Callable by anyone on behalf of the `_staker`
+   * @dev Callable by anyone on behalf of the `_staker`. Resets the `_staker`'s cooldown values to 0, and transfers the
+   * unstaked funds to them.
    */
   function completeUnstake(address _staker) public {
     // load a pointer to the wearer's stake in storage
-    Stake storage s = stakes[_staker];
+    Stake storage stk = stakes[_staker];
     // _staker must not have been slashed since beginning the unstake
-    if (s.slashed) revert StakingEligibility_AlreadySlashed();
+    if (stk.slashed) revert StakingEligibility_AlreadySlashed();
     // load a pointer to the wearer's unstake ticket in storage
     Cooldown storage cooldown = cooldowns[_staker];
     uint248 amount = cooldown.amount;
     // cooldown must have been initiated
-    if (amount == 0) revert StakingEligibility_NotUnstaking();
+    if (amount == 0) revert StakingEligibility_NoCooldown();
     // cooldown period must have elapsed
     if (cooldown.endsAt > block.timestamp) revert StakingEligibility_CooldownNotEnded();
 
     // we are completing the unstake, so we zero out the cooldown
     cooldown.amount = 0;
     cooldown.endsAt = 0;
-
-    // decrement the staker's stake
-    s.amount -= amount;
-    // decrement the total valid stakes
-    totalValidStakes -= amount;
 
     // execute the unstake, reverting if the transfer fails
     bool success = TOKEN().transfer(_staker, amount);
@@ -310,7 +318,7 @@ contract StakingEligibility is HatsEligibilityModule {
   //////////////////////////////////////////////////////////////*/
 
   /**
-   * @notice Slash `_staker`'s full stake. Even if stake is 0, slashing still sets their standing to false in
+   * @notice Slash `_staker`'s full stk. Even if stake is 0, slashing still sets their standing to false in
    * {getWearerStatus}
    * @dev Only a wearer of the judge hat can slash; cannot slash twice
    * @param _staker The staker to slash
@@ -319,19 +327,28 @@ contract StakingEligibility is HatsEligibilityModule {
     // only the judge can slash
     if (!HATS().isWearerOfHat(msg.sender, judgeHat)) revert StakingEligibility_NotJudge();
     // load a pointer to the wearer's stake in storage
-    Stake storage s = stakes[_staker];
+    Stake storage stk = stakes[_staker];
     // cannot slash if already slashed
-    if (s.slashed) revert StakingEligibility_AlreadySlashed();
+    if (stk.slashed) revert StakingEligibility_AlreadySlashed();
 
-    // read the amount to slash into memory
-    uint248 toSlash = s.amount;
+    // load a pointer to the _staker's cooldown in storage
+    Cooldown storage cooldown = cooldowns[_staker];
+
+    // read the amounts to slash into memory
+    uint248 stakedAmount = stk.amount;
+    uint248 toSlash = cooldown.amount + stakedAmount;
     // set the status to slashed
-    s.slashed = true;
-    // we are slashing, so we zero out the stake
-    s.amount = 0;
-    // decrement the total valid stakes
-    totalValidStakes -= toSlash;
-    // increment the total slashed stakes
+    stk.slashed = true;
+    // we are slashing, so we zero out the stake amount and cooldown values
+    stk.amount = 0;
+    cooldown.amount = 0;
+    cooldown.endsAt = 0;
+    // decrement the total valid stakes by the staked amount (the cooldown amount is already subtracted)
+    unchecked {
+      // should not underflow since totalValidStakes is always >= stk.amount
+      totalValidStakes -= stakedAmount;
+    }
+    // increment the total slashed stakes by the total amount to slash
     totalSlashedStakes += toSlash;
 
     // log the slash
@@ -347,12 +364,12 @@ contract StakingEligibility is HatsEligibilityModule {
     // only the judge can forgive
     if (!HATS().isWearerOfHat(msg.sender, judgeHat)) revert StakingEligibility_NotJudge();
     // load a pointer to the wearer's stake in storage
-    Stake storage s = stakes[_staker];
+    Stake storage stk = stakes[_staker];
     // cannot forgive if not slashed
-    if (!s.slashed) revert StakingEligibility_NotSlashed();
+    if (!stk.slashed) revert StakingEligibility_NotSlashed();
 
     // set slashed to false
-    s.slashed = false;
+    stk.slashed = false;
 
     // log the forgiveness
     emit StakingEligibility_Forgiven(_staker);
@@ -422,7 +439,7 @@ contract StakingEligibility is HatsEligibilityModule {
   /**
    * @notice Change the number of seconds that must elapse between beginning an unstake and completing it. This period
    * should be long enough that a wearer of the `judgeHat` has enough time to slash a misbehaving staker before they can
-   * unstake.
+   * unstk.
    * @dev Only an admin of the {hatId} can change the cooldownPeriod, and only if the hat is mutable
    * @param _cooldownPeriod The new cooldown period
    */
