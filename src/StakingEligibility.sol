@@ -18,6 +18,10 @@ contract StakingEligibility is HatsEligibilityModule {
 
   /// @notice Thrown when a staker tries to unstake more than they have staked
   error StakingEligibility_InsufficientStake();
+  /// @notice Thrown when an unstaker attempts to complete an unstake before the cooldown period has elapsed
+  error StakingEligibility_StillCoolingDown();
+  /// @notice Thrown when an unstaker attempts to complete an unstake before beginning one
+  error StakingEligibility_NotUnstaking();
   /// @notice Thrown when a judge tries to slash an already-slashed wearer, or when a slashed staker tries to unstake
   error StakingEligibility_AlreadySlashed();
   /// @notice Thrown when a non-judge tries to slash a wearer
@@ -45,6 +49,8 @@ contract StakingEligibility is HatsEligibilityModule {
   );
   /// @notice Emitted when a staker stakes
   event StakingEligibility_Staked(address staker, uint248 amount);
+  /// @notice Emitted when a staker begins an unstake
+  event StakingEligibility_UnstakeBegun(address staker, uint248 amount, uint256 cooldownEnd);
   /// @notice Emitted when a judge slashes a wearer
   event StakingEligibility_Slashed(address wearer, uint248 amount);
   /// @notice Emitted when the minStake is updated by an admin of the {hatId}
@@ -53,6 +59,8 @@ contract StakingEligibility is HatsEligibilityModule {
   event StakingEligibility_JudgeHatChanged(uint256 newJudgeHat);
   /// @notice Emitted when the recipientHat is updated by an admin of the {hatId}
   event StakingEligibility_RecipientHatChanged(uint256 newRecipientHat);
+  /// @notice Emitted when the cooldownPeriod is updated by an admin of the {hatId}
+  event StakingEligibility_CooldownPeriodChanged(uint256 newDelay);
   /// @notice Emitted when a slashed staker is forgiven
   event StakingEligibility_Forgiven(address staker);
 
@@ -66,6 +74,13 @@ contract StakingEligibility is HatsEligibilityModule {
   struct Stake {
     uint248 amount; // 31 bytes
     bool slashed; // 1 byte
+  }
+
+  /// @custom:member amount The amount of tokens to be unstaked
+  /// @custom:member endsAt When the cooldown period ends, in seconds since the epoch
+  struct Cooldown {
+    uint248 amount;
+    uint256 endsAt;
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -115,8 +130,14 @@ contract StakingEligibility is HatsEligibilityModule {
   /// @notice The hat that can withdraw slashed stakes
   uint256 public recipientHat;
 
+  /// @notice The number of seconds that must elapse between beginning an unstake and completing it
+  uint256 public cooldownPeriod;
+
   /// @notice The stakes of each staker
   mapping(address staker => Stake stake) public stakes;
+
+  /// @notice Current unstaking cooldown periods
+  mapping(address staker => Cooldown cooldown) public cooldowns;
 
   /// @notice The sum of all valid stakes
   uint248 public totalValidStakes;
@@ -203,30 +224,65 @@ contract StakingEligibility is HatsEligibilityModule {
     emit StakingEligibility_Staked(msg.sender, _amount);
   }
 
-  /**
-   * @notice Unstake `_amount` tokens
-   * @param _amount The amount of tokens to unstake, as a uint248. Must be less than or equal to the caller's current
-   * stake
-   */
-  function unstake(uint248 _amount) external {
+  function beginUnstake(uint248 _amount) external {
     // load a pointer to the wearer's stake in storage
-    Stake storage s = stakes[msg.sender];
-    // _staker must have enough tokens staked; can occur after withdrawal or slashing
-    if (s.amount < _amount) revert StakingEligibility_InsufficientStake();
+    // Stake memory s = stakes[msg.sender]; // TODO check gas impact
+
+    // _staker must have enough tokens staked
+    if (stakes[msg.sender].amount < _amount) revert StakingEligibility_InsufficientStake();
+
+    // create a new cooldown
+    Cooldown storage cooldown = cooldowns[msg.sender];
+    cooldown.amount = _amount;
+    uint256 end = block.timestamp + cooldownPeriod;
+    cooldown.endsAt = end;
+
+    // log the unstake initiation
+    emit StakingEligibility_UnstakeBegun(msg.sender, _amount, end);
+  }
+
+  /**
+   * @notice Complete the process of unstaking for a `_staker` after the `cooldownPeriod` has elapsed
+   * @dev Callable by anyone on behalf of the `_staker`
+   */
+  function completeUnstake(address _staker) public {
+    // load a pointer to the wearer's stake in storage
+    Stake storage s = stakes[_staker];
+    // _staker must not have been slashed since beginning the unstake
+    if (s.slashed) revert StakingEligibility_AlreadySlashed();
+    // load a pointer to the wearer's unstake ticket in storage
+    Cooldown storage cooldown = cooldowns[msg.sender];
+    uint248 amount = cooldown.amount;
+    // cooldown must have been initiated
+    if (amount == 0) revert StakingEligibility_NotUnstaking();
+    // cooldown period must have elapsed
+    if (cooldown.endsAt > block.timestamp) revert StakingEligibility_StillCoolingDown();
+
+    // we are completing the unstake, so we zero out the cooldown
+    cooldown.amount = 0;
+    cooldown.endsAt = 0;
+    // delete cooldown; // TODO check gas impact
 
     // decrement the staker's stake
-    s.amount -= _amount;
+    s.amount -= amount;
     // decrement the total valid stakes
-    totalValidStakes -= _amount;
+    totalValidStakes -= amount;
 
-    // execute the unstake,
-    bool success = TOKEN().transfer(msg.sender, _amount);
+    // execute the unstake, reverting if the transfer fails
+    bool success = TOKEN().transfer(msg.sender, amount);
     if (!success) revert StakingEligibility_TransferFailed();
     /**
      * @dev this action is logged by the token contract, so we don't need to emit an event
      *
      * ERC20.Transfer(address(this), _staker, _amount);
      */
+  }
+
+  /**
+   * @notice Complete the process of unstaking after the `cooldownPeriod` has elapsed
+   */
+  function completeUnstake() external {
+    completeUnstake(msg.sender);
   }
 
   /*//////////////////////////////////////////////////////////////
@@ -319,6 +375,11 @@ contract StakingEligibility is HatsEligibilityModule {
     emit StakingEligibility_MinStakeChanged(_minStake);
   }
 
+  /**
+   * @notice Change the hat that can slash wearers
+   * @dev Only an admin of the {hatId} can change the judgeHat, and only if the hat is mutable
+   * @param _judgeHat The new judge hat
+   */
   function changeJudgeHat(uint256 _judgeHat) external onlyHatAdmin hatIsMutable {
     judgeHat = _judgeHat;
 
@@ -326,11 +387,23 @@ contract StakingEligibility is HatsEligibilityModule {
     emit StakingEligibility_JudgeHatChanged(_judgeHat);
   }
 
+  /**
+   * @notice Change the hat whose wearer is the recipient of withdrawn slashed stakes
+   * @dev Only an admin of the {hatId} can change the recipientHat, and only if the hat is mutable
+   * @param _recipientHat The new recipient hat
+   */
   function changeRecipientHat(uint256 _recipientHat) external onlyHatAdmin hatIsMutable {
     recipientHat = _recipientHat;
 
     // log the change
     emit StakingEligibility_RecipientHatChanged(_recipientHat);
+  }
+
+  function changeCooldownPeriod(uint256 _cooldownPeriod) external onlyHatAdmin hatIsMutable {
+    cooldownPeriod = _cooldownPeriod;
+
+    // log the change
+    emit StakingEligibility_CooldownPeriodChanged(_cooldownPeriod);
   }
 
   /*//////////////////////////////////////////////////////////////
