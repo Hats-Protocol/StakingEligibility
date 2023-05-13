@@ -153,9 +153,6 @@ contract StakingEligibility is HatsEligibilityModule {
   /// @notice Current unstaking cooldown periods
   mapping(address staker => Cooldown cooldown) public cooldowns;
 
-  /// @notice The sum of all valid stakes
-  uint248 public totalValidStakes;
-
   /// @notice The sum of all slashed stakes that have not yet been withdrawn to a wearer of the `recipientHat`
   uint248 public totalSlashedStakes;
 
@@ -227,9 +224,8 @@ contract StakingEligibility is HatsEligibilityModule {
     // staker must have not been slashed
     if (stk.slashed) revert StakingEligibility_AlreadySlashed();
 
-    // increment the staker's stake and total valid stakes
+    // increment the staker's stake
     stk.amount += _amount;
-    totalValidStakes += _amount;
 
     // execute the stake and log it, reverting if the transfer fails
     bool success = TOKEN().transferFrom(msg.sender, address(this), uint256(_amount));
@@ -266,8 +262,6 @@ contract StakingEligibility is HatsEligibilityModule {
     unchecked {
       // should not underflow given the InsufficientStake check above
       stk.amount -= _amount;
-      // should not underflow since totalValidStakes is always >= stk.amount
-      totalValidStakes -= _amount;
     }
 
     // log the unstake initiation
@@ -343,11 +337,7 @@ contract StakingEligibility is HatsEligibilityModule {
     stk.amount = 0;
     cooldown.amount = 0;
     cooldown.endsAt = 0;
-    // decrement the total valid stakes by the staked amount (the cooldown amount is already subtracted)
-    unchecked {
-      // should not underflow since totalValidStakes is always >= stk.amount
-      totalValidStakes -= stakedAmount;
-    }
+
     // increment the total slashed stakes by the total amount to slash
     totalSlashedStakes += toSlash;
 

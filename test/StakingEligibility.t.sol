@@ -152,14 +152,9 @@ contract WithInstanceTest is StakingEligibilityTest {
     // change the stakerHat's eligibility to instance
     vm.prank(dao);
     hats.changeHatEligibility(stakerHat, address(instance));
-
-    // mint some tokens to the stakers
-
-    deal(token, staker2, 100_000);
   }
 
   function recordPrelimValues(address _staker) public {
-    totalStaked = instance.totalValidStakes();
     totalSlashed = instance.totalSlashedStakes();
     (stakerStake, stakerSlashed) = instance.stakes(_staker);
     stakerBalance = IERC20(token).balanceOf(_staker);
@@ -169,7 +164,6 @@ contract WithInstanceTest is StakingEligibilityTest {
 
   function stateAssertions(address _staker) public {
     // global state assertions
-    assertEq(instance.totalValidStakes(), expTotalStaked, "totalStaked");
     assertEq(instance.totalSlashedStakes(), expTotalSlashed, "totalSlashedStakes");
 
     // staker stake assertions
@@ -280,7 +274,6 @@ contract SetUp is WithInstanceTest {
   }
 
   function test_otherStateVars_areEmpty() public {
-    assertEq(instance.totalValidStakes(), 0, "totalStaked");
     assertEq(instance.totalSlashedStakes(), 0, "totalSlashedStakes");
   }
 
@@ -384,7 +377,6 @@ contract Staking is WithInstanceTest {
     // set expected post values
     if (stakerSlashed || !_approved) {
       // expect no change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake;
       expStakerSlashed = stakerSlashed;
@@ -392,7 +384,6 @@ contract Staking is WithInstanceTest {
       expInstanceBalance = uint256(instanceBalance);
     } else {
       // expect stake vars to change
-      expTotalStaked = totalStaked + _amount;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake + _amount;
       expStakerSlashed = stakerSlashed;
@@ -546,7 +537,6 @@ contract Unstaking is WithInstanceTest {
     // set expected post values
     if (!_sufficient) {
       // expect no change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake;
       expStakerSlashed = stakerSlashed;
@@ -556,7 +546,6 @@ contract Unstaking is WithInstanceTest {
       expStakerCooldownEnd = 0;
     } else {
       // expect stake vars to change
-      expTotalStaked = totalStaked - _amount;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake - _amount;
       expStakerSlashed = stakerSlashed;
@@ -592,7 +581,6 @@ contract Unstaking is WithInstanceTest {
     // set expected post values
     if (stakerSlashed || !unstaking || !cooldownEnded) {
       // expect no change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake;
       expStakerSlashed = stakerSlashed;
@@ -602,7 +590,6 @@ contract Unstaking is WithInstanceTest {
       expStakerCooldownEnd = stakerCooldownEnd;
     } else {
       // expect only cooldown and balance vars to change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake;
       expStakerSlashed = stakerSlashed;
@@ -780,7 +767,6 @@ contract Slashing is WithInstanceTest {
     // set expected post values
     if (!_judge) {
       // expect no change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake;
       expStakerSlashed = stakerSlashed;
@@ -790,7 +776,6 @@ contract Slashing is WithInstanceTest {
       expStakerCooldownEnd = stakerCooldownEnd;
     } else {
       // expect stake, cooldown, and slashed vars to change
-      expTotalStaked = totalStaked - stakerStake;
       expTotalSlashed = totalSlashed + stakerStake + stakerUnstakeAmount;
       expStakerStake = stakerStake - stakerStake;
       expStakerSlashed = true;
@@ -886,7 +871,6 @@ contract Forgiving is WithInstanceTest {
     // set expected post values
     if (!_judge) {
       // expect no change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake;
       expStakerSlashed = stakerSlashed;
@@ -894,7 +878,6 @@ contract Forgiving is WithInstanceTest {
       expInstanceBalance = instanceBalance;
     } else {
       // expect stake and slashed vars to change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expStakerStake = stakerStake;
       expStakerSlashed = false;
@@ -953,7 +936,6 @@ contract Forgiving is WithInstanceTest {
 
 contract Withdrawing is WithInstanceTest {
   function withdrawTest(address _to, bool _recipient, bool _somethingToWithdraw) public {
-    totalStaked = instance.totalValidStakes();
     totalSlashed = instance.totalSlashedStakes();
     instanceBalance = IERC20(token).balanceOf(address(instance));
 
@@ -972,17 +954,14 @@ contract Withdrawing is WithInstanceTest {
     // set expected post values
     if (!_recipient) {
       // expect no change
-      expTotalStaked = totalStaked;
       expTotalSlashed = totalSlashed;
       expInstanceBalance = instanceBalance;
     } else {
       // expect slashed vars to change
-      expTotalStaked = totalStaked;
       expTotalSlashed = 0;
       expInstanceBalance = instanceBalance - totalSlashed;
     }
 
-    assertEq(instance.totalValidStakes(), expTotalStaked, "totalStaked");
     assertEq(instance.totalSlashedStakes(), expTotalSlashed, "totalSlashedStakes");
     assertEq(IERC20(token).balanceOf(address(instance)), expInstanceBalance, "instanceBalance");
   }
