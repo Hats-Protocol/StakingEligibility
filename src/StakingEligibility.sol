@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-// import { console2 } from "forge-std/Test.sol"; // remove before deploy
+import { console2 } from "forge-std/Test.sol"; // remove before deploy
 import { HatsEligibilityModule, HatsModule } from "hats-module/HatsEligibilityModule.sol";
+// import { HatsModule } from "hats-module/HatsModule.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
@@ -153,9 +154,6 @@ contract StakingEligibility is HatsEligibilityModule {
   /// @notice Current unstaking cooldown periods
   mapping(address staker => Cooldown cooldown) public cooldowns;
 
-  /// @notice The sum of all valid stakes
-  uint248 public totalValidStakes;
-
   /// @notice The sum of all slashed stakes that have not yet been withdrawn to a wearer of the `recipientHat`
   uint248 public totalSlashedStakes;
 
@@ -227,9 +225,8 @@ contract StakingEligibility is HatsEligibilityModule {
     // staker must have not been slashed
     if (stk.slashed) revert StakingEligibility_AlreadySlashed();
 
-    // increment the staker's stake and total valid stakes
+    // increment the staker's stake
     stk.amount += _amount;
-    totalValidStakes += _amount;
 
     // execute the stake and log it, reverting if the transfer fails
     bool success = TOKEN().transferFrom(msg.sender, address(this), uint256(_amount));
@@ -266,8 +263,6 @@ contract StakingEligibility is HatsEligibilityModule {
     unchecked {
       // should not underflow given the InsufficientStake check above
       stk.amount -= _amount;
-      // should not underflow since totalValidStakes is always >= stk.amount
-      totalValidStakes -= _amount;
     }
 
     // log the unstake initiation
@@ -307,7 +302,7 @@ contract StakingEligibility is HatsEligibilityModule {
   }
 
   /**
-   * @notice Complete the process of unstaking after the `cooldownPeriod` has elapsed
+   * @notice Complete the process of unstaking one's own stake after the `cooldownPeriod` has elapsed
    */
   function completeUnstake() external {
     completeUnstake(msg.sender);
@@ -343,11 +338,7 @@ contract StakingEligibility is HatsEligibilityModule {
     stk.amount = 0;
     cooldown.amount = 0;
     cooldown.endsAt = 0;
-    // decrement the total valid stakes by the staked amount (the cooldown amount is already subtracted)
-    unchecked {
-      // should not underflow since totalValidStakes is always >= stk.amount
-      totalValidStakes -= stakedAmount;
-    }
+
     // increment the total slashed stakes by the total amount to slash
     totalSlashedStakes += toSlash;
 
@@ -382,6 +373,7 @@ contract StakingEligibility is HatsEligibilityModule {
   function withdraw(address _recipient) external {
     // read the total slashed stakes into memory
     uint248 toWithdraw = totalSlashedStakes;
+    // console2.log("toWithdraw", toWithdraw);
     // don't proceed if there's nothing to withdraw
     if (toWithdraw == 0) revert StakingEligibility_NothingToWithdraw();
     // can only be withdrawn to the recipient
@@ -392,6 +384,7 @@ contract StakingEligibility is HatsEligibilityModule {
 
     // execute the withdrawal, reverting if the transfer fails
     bool success = TOKEN().transfer(_recipient, toWithdraw);
+    // console2.log("_recipient balance", TOKEN().balanceOf(_recipient));
     if (!success) revert StakingEligibility_TransferFailed();
     /**
      * @dev this action is logged by the token contract, so we don't need to emit an event

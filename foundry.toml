@@ -13,16 +13,17 @@ remappings = [
   "@openzeppelin/=lib/openzeppelin-contracts/",
   "hats-module/=lib/hats-module/src/"
 ]
+invariant = { runs = 25, depth = 100 }
 
 [profile.ci]
 fuzz = { runs = 5000 }
-invariant = { runs = 1000 }
+invariant = { runs = 250, depth = 250 }
 
 [profile.lite]
 fuzz = { runs = 32 }
 invariant = { runs = 10 }
 # Speed up compilation and tests during development.
-optimizer = false
+# optimizer = false # optimizer needs to be on to ensure Hats.sol can compile without stack too deep erros
 
 [fmt]
 bracket_spacing = true
