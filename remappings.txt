@@ -1,0 +1,10 @@
+@openzeppelin-contracts/=lib/hats-module/lib/openzeppelin-contracts/
+@openzeppelin/=lib/openzeppelin-contracts/
+ds-test/=lib/forge-std/lib/ds-test/src/
+forge-std/=lib/forge-std/src/
+hats-module/=lib/hats-module/src/
+hats-protocol/=lib/hats-protocol/src/
+openzeppelin-contracts/=lib/openzeppelin-contracts/
+openzeppelin/=lib/openzeppelin-contracts/contracts/
+solady/=lib/solady/src/
+solmate/=lib/solady/lib/solmate/src/
