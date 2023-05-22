@@ -13,7 +13,7 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   // bytes32 public SALT = bytes32(abi.encode(0x4a75)); // ~ H(4) A(a) T(7) S(5)
 
   // other test variables
-  IHats public constant hats = IHats(0x9D2dfd6066d5935267291718E8AA16C8Ab729E9d); // v1.hatsprotocol.eth
+  IHats public hats = IHats(0x9D2dfd6066d5935267291718E8AA16C8Ab729E9d); // v1.hatsprotocol.eth
   HatsModuleFactory public factory;
   StakingEligibility public instance;
   StakingEligibilityHarness public harnessImpl;
@@ -27,7 +27,7 @@ contract StakingEligibilityTest is Test, DeployImplementation {
   bytes public initData;
   bytes public otherImmutableArgs;
   uint256 public tophat1;
-  address public token;
+  IERC20 public token;
   uint248 public minStake;
   uint256 public cooldownPeriod;
   uint256 public stakerHat;
@@ -94,18 +94,7 @@ contract StakingEligibilityTest is Test, DeployImplementation {
 
   event Transfer(address indexed from, address indexed to, uint256 value);
 
-  function setUp() public virtual {
-    // create and activate a mainnet fork
-    fork = vm.createSelectFork(vm.rpcUrl("mainnet"), BLOCK_NUMBER);
-
-    // deploy the clone factory
-    factory = new HatsModuleFactory{ salt: SALT}(hats, FACTORY_VERSION);
-
-    // deploy the implementation via script
-    DeployImplementation.prepare(MODULE_VERSION, false); // set to true to log deployment addresses
-    DeployImplementation.run();
-
-    // set up the dao's hats
+  function createHats() public {
     vm.startPrank(dao);
     tophat1 = hats.mintTopHat(dao, "tophat1", "");
     judgeHat = hats.createHat(tophat1, "judge", 1, defaultModule, defaultModule, true, "");
@@ -114,6 +103,26 @@ contract StakingEligibilityTest is Test, DeployImplementation {
     hats.mintHat(judgeHat, judge);
     hats.mintHat(recipientHat, recipient);
     vm.stopPrank();
+  }
+
+  function deployFactoryContracts() public {
+    // deploy the clone factory
+    factory = new HatsModuleFactory{ salt: SALT}(hats, FACTORY_VERSION);
+
+    // deploy the implementation via script
+    DeployImplementation.prepare(MODULE_VERSION, false); // set to true to log deployment addresses
+    DeployImplementation.run();
+  }
+
+  function setUp() public virtual {
+    // create and activate a mainnet fork
+    fork = vm.createSelectFork(vm.rpcUrl("mainnet"), BLOCK_NUMBER);
+
+    // deploy the factory contracts
+    deployFactoryContracts();
+
+    // set up the dao's hats
+    createHats();
   }
 
   function deployInstance(
@@ -142,12 +151,12 @@ contract WithInstanceTest is StakingEligibilityTest {
   function setUp() public virtual override {
     super.setUp();
     // set deploy params
-    token = 0x6B175474E89094C44Da98b954EedeAC495271d0F; // DAI
+    token = IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F); // DAI
     minStake = 1000;
     cooldownPeriod = 1 hours;
 
     // deploy the instance
-    deployInstance(stakerHat, token, minStake, judgeHat, recipientHat, cooldownPeriod);
+    deployInstance(stakerHat, address(token), minStake, judgeHat, recipientHat, cooldownPeriod);
 
     // change the stakerHat's eligibility to instance
     vm.prank(dao);
@@ -157,8 +166,8 @@ contract WithInstanceTest is StakingEligibilityTest {
   function recordPrelimValues(address _staker) public {
     totalSlashed = instance.totalSlashedStakes();
     (stakerStake, stakerSlashed) = instance.stakes(_staker);
-    stakerBalance = IERC20(token).balanceOf(_staker);
-    instanceBalance = IERC20(token).balanceOf(address(instance));
+    stakerBalance = token.balanceOf(_staker);
+    instanceBalance = token.balanceOf(address(instance));
     (stakerUnstakeAmount, stakerCooldownEnd) = instance.cooldowns(_staker);
   }
 
@@ -172,8 +181,8 @@ contract WithInstanceTest is StakingEligibilityTest {
     assertEq(stakerSlashed, expStakerSlashed, "stakerSlashed");
 
     // balance assertions
-    assertEq(IERC20(token).balanceOf(_staker), expStakerBalance, "stakerBalance");
-    assertEq(IERC20(token).balanceOf(address(instance)), expInstanceBalance, "instanceBalance");
+    assertEq(token.balanceOf(_staker), expStakerBalance, "stakerBalance");
+    assertEq(token.balanceOf(address(instance)), expInstanceBalance, "instanceBalance");
 
     // staker unstake cooldown assertions
     (stakerUnstakeAmount, stakerCooldownEnd) = instance.cooldowns(_staker);
@@ -183,10 +192,10 @@ contract WithInstanceTest is StakingEligibilityTest {
 
   function stake(address _staker, uint248 _amount) public {
     // ensure the caller has enough tokens
-    deal(token, _staker, _amount);
+    deal(address(token), _staker, _amount);
     // approve the instance to spend the staker's tokens
     vm.prank(_staker);
-    IERC20(token).approve(address(instance), _amount);
+    token.approve(address(instance), _amount);
     // submit the stake from the caller
     vm.prank(_staker);
     instance.stake(_amount);
@@ -284,9 +293,11 @@ contract SetUp is WithInstanceTest {
     address predicted = factory.getHatsModuleAddress(address(implementation), stakerHat, otherImmutableArgs);
     // expect the event
     vm.expectEmit(true, true, true, true);
-    emit StakingEligibility_Deployed(stakerHat, predicted, token, minStake, judgeHat, recipientHat, cooldownPeriod);
+    emit StakingEligibility_Deployed(
+      stakerHat, predicted, address(token), minStake, judgeHat, recipientHat, cooldownPeriod
+    );
 
-    deployInstance(stakerHat, token, minStake, judgeHat, recipientHat, cooldownPeriod);
+    deployInstance(stakerHat, address(token), minStake, judgeHat, recipientHat, cooldownPeriod);
   }
 }
 
@@ -364,7 +375,7 @@ contract Staking is WithInstanceTest {
     } else {
       // approve the instance to spend the staker's tokens
       vm.prank(_staker);
-      IERC20(token).approve(address(instance), _amount);
+      token.approve(address(instance), _amount);
       // expect the Staked event
       vm.expectEmit(true, true, true, true);
       emit StakingEligibility_Staked(_staker, _amount);
@@ -398,7 +409,7 @@ contract Staking is WithInstanceTest {
   }
 
   function testFuzz_firstStake_happy(uint248 _amount) public {
-    deal(token, staker1, _amount, true);
+    deal(address(token), staker1, _amount, true);
     stakeTest(staker1, _amount, true);
 
     // wearer status checks
@@ -419,7 +430,7 @@ contract Staking is WithInstanceTest {
 
   function test_stakeTwice_happy() public {
     amount = 1000;
-    deal(token, staker1, amount * 3);
+    deal(address(token), staker1, amount * 3);
     stakeTest(staker1, amount, true);
     stakeTest(staker1, amount + 1, true);
 
@@ -431,11 +442,11 @@ contract Staking is WithInstanceTest {
 
   function test_secondStaker_happy() public {
     amount = 1000;
-    deal(token, staker1, amount);
+    deal(address(token), staker1, amount);
     stakeTest(staker1, amount, true);
     // second staker stakes
     amount = 1005;
-    deal(token, staker2, amount);
+    deal(address(token), staker2, amount);
     stakeTest(staker2, amount, true);
 
     // wearer status checks
@@ -449,7 +460,7 @@ contract Staking is WithInstanceTest {
 
   function test_stake_coolingDown_happy() public {
     amount = 1000;
-    deal(token, staker1, amount);
+    deal(address(token), staker1, amount);
     stakeTest(staker1, amount, true);
 
     // begin unstake half the amount
@@ -458,7 +469,7 @@ contract Staking is WithInstanceTest {
 
     // stake again after cooldown begins
     vm.warp(block.timestamp + 1);
-    deal(token, staker1, amount);
+    deal(address(token), staker1, amount);
     stakeTest(staker1, amount, true);
 
     // wearer status checks
@@ -469,7 +480,7 @@ contract Staking is WithInstanceTest {
 
   function test_stake_unapproved_reverts() public {
     amount = 1000;
-    deal(token, staker1, amount);
+    deal(address(token), staker1, amount);
     stakeTest(staker1, amount, false);
 
     // wearer status checks
@@ -480,7 +491,7 @@ contract Staking is WithInstanceTest {
 
   function test_stake_slashed_reverts() public {
     amount = 1000;
-    deal(token, staker1, amount);
+    deal(address(token), staker1, amount);
     stakeTest(staker1, amount, true);
 
     // slash the staker
@@ -498,13 +509,13 @@ contract Staking is WithInstanceTest {
 
   function test_stakeTwice_TooMuch_reverts() public {
     amount = type(uint248).max;
-    deal(token, staker1, amount);
+    deal(address(token), staker1, amount);
     stakeTest(staker1, amount, true);
 
     amount = 1000; // will take amount over the max
-    deal(token, staker1, amount);
+    deal(address(token), staker1, amount);
     vm.prank(staker1);
-    IERC20(token).approve(address(instance), amount);
+    token.approve(address(instance), amount);
     // expect a revert due to overflow
     vm.expectRevert();
     vm.prank(staker1);
@@ -937,7 +948,7 @@ contract Forgiving is WithInstanceTest {
 contract Withdrawing is WithInstanceTest {
   function withdrawTest(address _to, bool _recipient, bool _somethingToWithdraw) public {
     totalSlashed = instance.totalSlashedStakes();
-    instanceBalance = IERC20(token).balanceOf(address(instance));
+    instanceBalance = token.balanceOf(address(instance));
 
     if (!_somethingToWithdraw) {
       vm.expectRevert(StakingEligibility_NothingToWithdraw.selector);
@@ -963,7 +974,7 @@ contract Withdrawing is WithInstanceTest {
     }
 
     assertEq(instance.totalSlashedStakes(), expTotalSlashed, "totalSlashedStakes");
-    assertEq(IERC20(token).balanceOf(address(instance)), expInstanceBalance, "instanceBalance");
+    assertEq(token.balanceOf(address(instance)), expInstanceBalance, "instanceBalance");
   }
 
   function test_withdraw_happy() public {

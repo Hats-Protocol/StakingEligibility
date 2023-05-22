@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.18;
 
-// import { console2 } from "forge-std/Test.sol"; // remove before deploy
+import { console2 } from "forge-std/Test.sol"; // remove before deploy
 import { HatsEligibilityModule, HatsModule } from "hats-module/HatsEligibilityModule.sol";
+// import { HatsModule } from "hats-module/HatsModule.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
@@ -301,7 +302,7 @@ contract StakingEligibility is HatsEligibilityModule {
   }
 
   /**
-   * @notice Complete the process of unstaking after the `cooldownPeriod` has elapsed
+   * @notice Complete the process of unstaking one's own stake after the `cooldownPeriod` has elapsed
    */
   function completeUnstake() external {
     completeUnstake(msg.sender);
@@ -372,6 +373,7 @@ contract StakingEligibility is HatsEligibilityModule {
   function withdraw(address _recipient) external {
     // read the total slashed stakes into memory
     uint248 toWithdraw = totalSlashedStakes;
+    // console2.log("toWithdraw", toWithdraw);
     // don't proceed if there's nothing to withdraw
     if (toWithdraw == 0) revert StakingEligibility_NothingToWithdraw();
     // can only be withdrawn to the recipient
@@ -382,6 +384,7 @@ contract StakingEligibility is HatsEligibilityModule {
 
     // execute the withdrawal, reverting if the transfer fails
     bool success = TOKEN().transfer(_recipient, toWithdraw);
+    // console2.log("_recipient balance", TOKEN().balanceOf(_recipient));
     if (!success) revert StakingEligibility_TransferFailed();
     /**
      * @dev this action is logged by the token contract, so we don't need to emit an event
