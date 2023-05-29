@@ -52,7 +52,7 @@ Only a wearer of the `judgeHat` can slash.
 
 ### Forgiving
 
-A slashed staker can be forgiven by calling the `forgive()` function. This does not unlash the staker, but it brings them out of bad standing and allows them to stake again if they wish.
+A slashed staker can be forgiven by calling the `forgive()` function. This does not unslash the staker, but it brings them out of bad standing and allows them to stake again if they wish.
 
 Only a wearer of the `judgeHat` can forgive.
 

@@ -4,7 +4,9 @@ pragma solidity ^0.8.18;
 import { Test, console2 } from "forge-std/Test.sol";
 import { StakingEligibility, IERC20 } from "src/StakingEligibility.sol";
 import { DeployImplementation } from "script/StakingEligibility.s.sol";
-import { HatsModuleFactory, IHats } from "hats-module/HatsModuleFactory.sol";
+import {
+  HatsModuleFactory, IHats, deployModuleInstance, deployModuleFactory
+} from "hats-module/utils/DeployFunctions.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 contract StakingEligibilityTest is Test, DeployImplementation {
@@ -107,7 +109,8 @@ contract StakingEligibilityTest is Test, DeployImplementation {
 
   function deployFactoryContracts() public {
     // deploy the clone factory
-    factory = new HatsModuleFactory{ salt: SALT}(hats, FACTORY_VERSION);
+    // factory = new HatsModuleFactory{ salt: SALT}(hats, FACTORY_VERSION);
+    factory = deployModuleFactory(hats, SALT, FACTORY_VERSION);
 
     // deploy the implementation via script
     DeployImplementation.prepare(MODULE_VERSION, false); // set to true to log deployment addresses
@@ -139,7 +142,8 @@ contract StakingEligibilityTest is Test, DeployImplementation {
     initData = abi.encode(_minStake, _judgeHat, _recipientHat, _cooldownPeriod);
     // deploy the instance
     instance =
-      StakingEligibility(factory.createHatsModule(address(implementation), _hatId, otherImmutableArgs, initData));
+      // StakingEligibility(factory.createHatsModule(address(implementation), _hatId, otherImmutableArgs, initData));
+      StakingEligibility(deployModuleInstance(factory, address(implementation), _hatId, otherImmutableArgs, initData));
   }
 }
 
@@ -223,7 +227,8 @@ contract HarnessTest is StakingEligibilityTest {
     harnessImpl = new StakingEligibilityHarness("harness version");
     // deploy an instance of the harness and initialize it with the same initData as `instance`
     harnessInstance =
-      StakingEligibilityHarness(factory.createHatsModule(address(harnessImpl), stakerHat, otherImmutableArgs, initData));
+      // StakingEligibilityHarness(factory.createHatsModule(address(harnessImpl), stakerHat, otherImmutableArgs, initData));
+      StakingEligibilityHarness(deployModuleInstance(factory, address(harnessImpl), stakerHat, otherImmutableArgs, initData));
   }
 }
 
