@@ -13,4 +13,4 @@
 	url = https://github.com/vectorized/solady
 [submodule "lib/hats-module"]
 	path = lib/hats-module
-	url = https://github.com/hats-protocol/hats-module
+	url = https://github.com/Hats-Protocol/hats-module
