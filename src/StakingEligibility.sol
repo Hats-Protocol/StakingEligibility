@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.19;
 
 // import { console2 } from "forge-std/Test.sol"; // remove before deploy
 import { HatsEligibilityModule, HatsModule } from "hats-module/HatsEligibilityModule.sol";
@@ -164,7 +164,7 @@ contract StakingEligibility is HatsEligibilityModule {
   /**
    * @inheritdoc HatsModule
    */
-  function setUp(bytes calldata _initdata) public override initializer {
+  function _setUp(bytes calldata _initdata) internal override {
     // decode the _initData bytes and set the values in storage
     (uint248 _minStake, uint256 _judgeHat, uint256 _recipientHat, uint256 _cooldownPeriod) =
       abi.decode(_initdata, (uint248, uint256, uint256, uint256));

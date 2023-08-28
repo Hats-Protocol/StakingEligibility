@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.18;
+pragma solidity ^0.8.19;
 
 import { Test, console2 } from "forge-std/Test.sol";
 import { StakingEligibility, IERC20 } from "src/StakingEligibility.sol";
@@ -225,12 +225,24 @@ contract HarnessTest is StakingEligibilityTest {
     super.setUp();
     // deploy the harness implementation
     harnessImpl = new StakingEligibilityHarness("harness version");
+
+    uint256 judgeHatHarness;
+    uint256 recipientHatHarness;
+    address tokenHarness = address(IERC20(0x6B175474E89094C44Da98b954EedeAC495271d0F)); // DAI
+    uint248 minStakeHarness = 1000;
+    uint256 cooldownPeriodHarness = 1 hours;
+
+    // encode the other immutable args
+    bytes memory otherImmutableArgsHarness = abi.encodePacked(tokenHarness);
+    // encode the init data
+    bytes memory initDataHarness =
+      abi.encode(minStakeHarness, judgeHatHarness, recipientHatHarness, cooldownPeriodHarness);
     // deploy an instance of the harness and initialize it with the same initData as `instance`
     harnessInstance =
     // StakingEligibilityHarness(factory.createHatsModule(address(harnessImpl), stakerHat, otherImmutableArgs,
     // initData));
     StakingEligibilityHarness(
-      deployModuleInstance(factory, address(harnessImpl), stakerHat, otherImmutableArgs, initData)
+      deployModuleInstance(factory, address(harnessImpl), stakerHat, otherImmutableArgsHarness, initDataHarness)
     );
   }
 }
