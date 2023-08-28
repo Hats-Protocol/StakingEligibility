@@ -11,7 +11,7 @@ contract DeployImplementation is Script {
   bytes32 public SALT = bytes32(abi.encode(0x4a75)); // ~ H(4) A(a) T(7) S(5)
 
   // default values
-  string public version = "0.2.0"; // increment with each deploy
+  string public version = "0.3.0"; // increment with each deploy
   bool private verbose = true;
 
   /// @notice Override default values, if desired
@@ -37,12 +37,12 @@ contract DeployImplementation is Script {
 }
 
 contract DeployInstance is Script {
-  address public implementation = 0xfFc3eFab7EeA6fe08B3A9FdE1F95B21683DdE869; // goerli
+  address public implementation = 0x9E01030aF633Be5a439DF122F2eEf750b44B8aC7; // goerli, v0.3.0
   address public instance;
   bytes public otherImmutableArgs;
   bytes public initData;
   address public token = 0xaFF4481D10270F50f203E0763e2597776068CBc5; // goerli, WEENUS
-  HatsModuleFactory public factory = HatsModuleFactory(0x696DBABd781D0e90b833968cF5C36C405772D4EA); // goerli, v0.1.0
+  HatsModuleFactory public factory = HatsModuleFactory(0x6D7E710BDbC80FC164ABA85e242E535c0A54CEc6); // goerli, v0.5.0
   uint256 public minStake = 1 ether;
   uint256 public stakerHat = 0x00000060_0001_0003_0003_0001_0000_0000_0000_0000_0000_0000_0000_0000_0000_0000; // 96.1.3.3.1
     // Arbitrator
